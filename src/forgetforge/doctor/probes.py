@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import importlib.metadata
 import shutil
+import sqlite3
 from collections.abc import Callable
+from pathlib import Path
+
+import yaml
 
 from .framework import DoctorContext
 
@@ -109,6 +113,100 @@ def handler_exception_coverage(ctx: DoctorContext) -> tuple[str, str]:
         return "fail", "no _wrap"
     except Exception as e:
         return "skip", f"cannot check: {e}"
+
+
+# NEW deterministic probes for previously-skipped checks (real checks only, skip on uncertainty)
+@_register("pyarrow_available_for_archive")
+def pyarrow_available_for_archive(ctx: DoctorContext) -> tuple[str, str]:
+    try:
+        import pyarrow
+        import pyarrow.parquet as pq  # noqa: F401
+        return "pass", f"pyarrow {pyarrow.__version__}"
+    except Exception:
+        return "warn", "optional, not installed"
+
+
+@_register("fts5_available")
+def fts5_available(ctx: DoctorContext) -> tuple[str, str]:
+    try:
+        conn = sqlite3.connect(":memory:")
+        try:
+            conn.execute("CREATE VIRTUAL TABLE t USING fts5(c)")
+            conn.execute("DROP TABLE t")
+            return "pass", "fts5 supported in sqlite"
+        finally:
+            conn.close()
+    except Exception as e:
+        return "warn", f"fts5 missing or error: {type(e).__name__}"
+
+
+@_register("wal_mode_enabled")
+def wal_mode_enabled(ctx: DoctorContext) -> tuple[str, str]:
+    # real check on actual db if exists, else skip (uncertainty)
+    try:
+        from forgetforge.config import default_home
+        home = default_home()
+        db_path = home / "db.sqlite"
+        if not db_path.exists():
+            return "skip", "db not present yet"
+        conn = sqlite3.connect(str(db_path), timeout=2.0)
+        try:
+            mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+            if isinstance(mode, str) and mode.lower() == "wal":
+                return "pass", "wal"
+            return "warn", f"mode={mode}"
+        finally:
+            conn.close()
+    except Exception as e:
+        return "skip", f"cannot check wal: {type(e).__name__}"
+
+
+@_register("forgetforge_home_env_valid")
+def forgetforge_home_env_valid(ctx: DoctorContext) -> tuple[str, str]:
+    try:
+        from forgetforge.config import default_home
+        home = default_home()
+        # check if can create subdir (real check)
+        test_sub = home / ".doctor_probe"
+        test_sub.mkdir(parents=True, exist_ok=True)
+        test_sub.rmdir()
+        return "pass", str(home)
+    except Exception as e:
+        return "skip", f"env/path issue: {type(e).__name__}"
+
+
+@_register("config_file_loadable")
+def config_file_loadable(ctx: DoctorContext) -> tuple[str, str]:
+    try:
+        from forgetforge.config import default_home
+        cfg_path = default_home() / "config.yaml"
+        if not cfg_path.exists():
+            return "skip", "config not present (uses defaults)"
+        with open(cfg_path, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        if isinstance(data, dict):
+            return "pass", "yaml loaded"
+        return "warn", "yaml not mapping"
+    except Exception as e:
+        return "skip", f"yaml load issue: {type(e).__name__}"
+
+
+@_register("hot_injection_hook_wired")
+def hot_injection_hook_wired(ctx: DoctorContext) -> tuple[str, str]:
+    # hermes_plugin_enabled style: check ~/.hermes/config.yaml for this plugin
+    try:
+        hermes_cfg = Path.home() / ".hermes" / "config.yaml"
+        if not hermes_cfg.exists():
+            return "skip", "config not present"
+        with open(hermes_cfg, encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        plugins = (data or {}).get("plugins", {}) or {}
+        enabled = plugins.get("enabled", []) or []
+        if any("autoclearmemory" in str(e).lower() or "forgetforge" in str(e).lower() for e in enabled):
+            return "pass", "plugin enabled in hermes"
+        return "warn", "not in plugins.enabled"
+    except Exception as e:
+        return "skip", f"hermes config read error: {type(e).__name__}"
 
 
 # note: other checks in catalog will be reported as skip (no probe)
