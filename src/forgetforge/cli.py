@@ -7,6 +7,11 @@ from typing import TYPE_CHECKING
 
 from forgetforge import __version__, db, hot_inject, import_brief, init_assets, pruner, rust_bridge, store
 from forgetforge.config import default_home, load_config
+from forgetforge.doctor import render_json, render_text, run_doctor
+from forgetforge.doctor.framework import load_catalog
+from forgetforge.doctor.probes import PROBES
+import importlib.resources
+from pathlib import Path
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -37,6 +42,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _import_brief(args)
     if args.command == "hot-context":
         return _hot_context(args)
+    if args.command == "doctor":
+        return _doctor(args)
     parser.print_help(sys.stderr)
     return 2
 
@@ -72,6 +79,9 @@ def _parser() -> argparse.ArgumentParser:
     brief.add_argument("--importance", type=float, default=0.65)
     hot = sub.add_parser("hot-context", help="Print hot-tier context block")
     hot.add_argument("--limit", type=int, default=8)
+    doctor = sub.add_parser("doctor", help="Run embedded doctor checks")
+    doctor.add_argument("--json", action="store_true")
+    doctor.add_argument("--verbose", action="store_true")
     return parser
 
 
@@ -117,7 +127,6 @@ def _init(args: argparse.Namespace) -> int:
 
 def _status() -> int:
     from forgetforge import recall
-
     cfg = load_config()
     conn = db.connect(cfg.db_path)
     stats = db.memory_stats(conn)
@@ -219,6 +228,28 @@ def _prune() -> int:
     conn.close()
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
+
+
+def _doctor(args: argparse.Namespace) -> int:
+    try:
+        pkg = "forgetforge.doctor"
+        cat_path = Path(str(importlib.resources.files(pkg).joinpath("catalog.json")))
+    except Exception:
+        cat_path = Path(__file__).parent.parent / "doctor" / "catalog.json"
+    result = run_doctor(
+        cwd=Path.cwd(),
+        catalog_path=cat_path,
+        probes=PROBES,
+        plugin="autoclearmemory",
+        version=__version__,
+    )
+    if getattr(args, "json", False):
+        print(render_json(result))
+    else:
+        cat_entries = load_catalog(cat_path)
+        text = render_text(result, cat_entries, verbose=getattr(args, "verbose", False))
+        print(text, file=sys.stderr)
+    return 0 if result.ok else 1
 
 
 def _parse_agents(raw: str) -> list[str]:

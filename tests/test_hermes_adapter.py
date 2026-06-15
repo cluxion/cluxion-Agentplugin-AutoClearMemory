@@ -18,6 +18,7 @@ _EXPECTED_TOOLS = {
     "forgetforge_forget",
     "forgetforge_import_brief",
     "forgetforge_hot_context",
+    "forgetforge_doctor",
 }
 
 
@@ -120,7 +121,7 @@ def test_schemas_are_full_function_specs() -> None:
 
     recorder = _Recorder()
     hermes.register(recorder)
-    assert len(recorder.pairs) == 7
+    assert len(recorder.pairs) == 8
     for name, schema in recorder.pairs:
         assert schema["name"] == name
         assert schema["description"].strip()

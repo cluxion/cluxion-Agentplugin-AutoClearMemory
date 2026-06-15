@@ -1,0 +1,469 @@
+[
+  {
+    "check_id": "hermes_on_path",
+    "category": "hermes_contract",
+    "severity": "critical",
+    "what_it_checks": "hermes binary is resolvable on PATH",
+    "failure_symptom": "All tool/subprocess calls to the host fail immediately",
+    "likely_causes": [
+      "Hermes not installed",
+      "PATH not exported in this shell/agent env"
+    ],
+    "fix_steps": [
+      "Run: which hermes",
+      "If missing, install/repair Hermes Agent and ensure its bin dir is on PATH",
+      "For agents, confirm the spawned shell inherits PATH"
+    ],
+    "change_robust": "Uses shutil.which at runtime — independent of any hardcoded path",
+    "detection_method": "shutil.which(ctx.hermes_bin) is not None"
+  },
+  {
+    "check_id": "hermes_version",
+    "category": "hermes_contract",
+    "severity": "high",
+    "what_it_checks": "hermes --version is parseable (host is a known-good build)",
+    "failure_symptom": "Unknown host version; contract assumptions may not hold",
+    "likely_causes": [
+      "Hermes build does not print the expected banner",
+      "Broken install"
+    ],
+    "fix_steps": [
+      "Run: hermes --version",
+      "Reinstall Hermes if the version banner is missing"
+    ],
+    "change_robust": "Parses live --version output, not a pinned constant",
+    "detection_method": "regex 'Hermes Agent v<ver>' matches `hermes --version`"
+  },
+  {
+    "check_id": "hermes_oneshot_flag",
+    "category": "hermes_contract",
+    "severity": "critical",
+    "what_it_checks": "host advertises -z/--oneshot (the non-interactive entry every plugin relies on)",
+    "failure_symptom": "Plugin/CLI falls into interactive mode or errors when invoking the host",
+    "likely_causes": [
+      "A Hermes update renamed/removed the oneshot flag"
+    ],
+    "fix_steps": [
+      "Run: hermes --help | grep -- -z",
+      "If absent, pin to a compatible Hermes version or update the plugin to the new flag"
+    ],
+    "change_robust": "Greps live --help output each run — detects a Hermes update that breaks the contract",
+    "detection_method": "'-z' and '--oneshot' present in `hermes --help`"
+  },
+  {
+    "check_id": "entry_point_registered",
+    "category": "registration",
+    "severity": "critical",
+    "what_it_checks": "this plugin's entry point is registered under hermes_agent.plugins and import+register() works",
+    "failure_symptom": "Plugin not loaded by Hermes; its tools/subcommand are absent",
+    "likely_causes": [
+      "pip install incomplete",
+      "entry point metadata missing",
+      "register() import error"
+    ],
+    "fix_steps": [
+      "Run: python -c \"import importlib.metadata as m; print([e.value for e in m.entry_points(group='hermes_agent.plugins') if 'cluxion-agentplugin-autoclearmemory' in e.name.lower()])\"",
+      "Reinstall: pip install --force-reinstall cluxion-Agentplugin-AutoClearMemory",
+      "Confirm the entry module imports and exposes a callable register"
+    ],
+    "change_robust": "Reads live importlib.metadata.entry_points(), not a config file",
+    "detection_method": "entry_points(group='hermes_agent.plugins') contains this dist and register is callable"
+  },
+  {
+    "check_id": "toolset_valid",
+    "category": "contract_drift",
+    "severity": "high",
+    "what_it_checks": "this plugin's toolset 'forgetforge' is listed and enabled by `hermes tools list`",
+    "failure_symptom": "Model cannot see this plugin's tools; --toolsets silently ignores it",
+    "likely_causes": [
+      "Plugin failed to register its toolset",
+      "Hermes toolset registration API changed"
+    ],
+    "fix_steps": [
+      "Run: hermes tools list | grep forgetforge",
+      "If missing, reinstall cluxion-Agentplugin-AutoClearMemory and restart the host",
+      "Verify register_tool used a valid toolset name"
+    ],
+    "change_robust": "Queries live `hermes tools list` for 'forgetforge' — catches contract drift on Hermes upgrade",
+    "detection_method": "'forgetforge' appears under plugin toolsets in `hermes tools list`"
+  },
+  {
+    "check_id": "install_integrity",
+    "category": "install",
+    "severity": "high",
+    "what_it_checks": "installed distribution version equals the package __version__",
+    "failure_symptom": "Stale or mismatched install; fixes/behaviors may not be the deployed ones",
+    "likely_causes": [
+      "Partial upgrade",
+      "multiple installs shadowing each other"
+    ],
+    "fix_steps": [
+      "Run: pip show cluxion-Agentplugin-AutoClearMemory",
+      "Force a clean reinstall: pip install --force-reinstall cluxion-Agentplugin-AutoClearMemory"
+    ],
+    "change_robust": "Compares live importlib.metadata.version() to __version__ — no hardcoding",
+    "detection_method": "importlib.metadata.version('cluxion-Agentplugin-AutoClearMemory') == __version__"
+  },
+  {
+    "check_id": "native_module_importable",
+    "category": "native_backend",
+    "severity": "medium",
+    "what_it_checks": "native module forgetforge_engine_native imports (else pure-Python/subprocess fallback is used)",
+    "failure_symptom": "Slower path; if fallback also broke, tool errors",
+    "likely_causes": [
+      "wheel ABI/arch mismatch",
+      "native package not installed"
+    ],
+    "fix_steps": [
+      "Run: python -c 'import forgetforge_engine_native'",
+      "If ImportError, reinstall the bundled wheel; fallback keeps working meanwhile"
+    ],
+    "change_robust": "Attempts the import + hasattr at runtime; WARN (not fail) because fallback works",
+    "detection_method": "import forgetforge_engine_native succeeds"
+  },
+  {
+    "check_id": "handler_exception_coverage",
+    "category": "handler",
+    "severity": "low",
+    "what_it_checks": "_wrap catches all exceptions (e.g. TypeError from float()) → error JSON, never raises to host",
+    "failure_symptom": "Traceback escapes into the host when the model emits a wrong-typed number field",
+    "likely_causes": [
+      "_wrap only caught (ValueError, OSError)"
+    ],
+    "fix_steps": [
+      "Broaden _wrap except to Exception"
+    ],
+    "change_robust": "Invokes a handler with a list where a number is expected and asserts error JSON",
+    "detection_method": "handler raising TypeError yields {ok:false,...}"
+  },
+  {
+    "check_id": "database_file_exists_and_readable",
+    "category": "resource",
+    "severity": "critical",
+    "what_it_checks": "SQLite database file exists at expected path (FORGETFORGE_HOME/db.sqlite) and can be opened",
+    "failure_symptom": "FileNotFoundError, database is locked (sqlite3.OperationalError with 'locked'), or database format error (sqlite3.DatabaseError)",
+    "likely_causes": [
+      "forgetforge init never ran (db not created)",
+      "FORGETFORGE_HOME environment variable points to non-existent or inaccessible directory",
+      "Disk full or filesystem read-only",
+      "Another process holds exclusive lock on db.sqlite (pruner daemon still running)",
+      "Corrupted SQLite file (truncated, overwritten, or partial write)",
+      "User lacks read/write permissions on ~/.forgetforge/ or db.sqlite"
+    ],
+    "fix_steps": [
+      "Initialize if missing: python -m forgetforge.cli init",
+      "Check FORGETFORGE_HOME: python -c \"from forgetforge.config import default_home; print(default_home())\"",
+      "Verify directory exists and is writable: ls -ld ~/.forgetforge && touch ~/.forgetforge/test && rm ~/.forgetforge/test",
+      "Check for locks: lsof ~/.forgetforge/db.sqlite (kill any holding process if stale)",
+      "Validate DB integrity: python -c \"import sqlite3; conn=sqlite3.connect('$HOME/.forgetforge/db.sqlite'); conn.execute('PRAGMA integrity_check')\" (expect 'ok')",
+      "If corrupted, backup and restore from archive: mv ~/.forgetforge/db.sqlite ~/.forgetforge/db.sqlite.backup && forgetforge init"
+    ],
+    "change_robust": "Probes actual file and DB state; detects corruption, locks, permissions at runtime before operations. Hermes updates do not affect this check.",
+    "detection_method": "Construct db_path from load_config(); check Path.exists() and try sqlite3.connect(db_path, timeout=5.0)"
+  },
+  {
+    "check_id": "database_schema_current",
+    "category": "config",
+    "severity": "critical",
+    "what_it_checks": "SQLite schema version is correct: memories table exists with all required columns (id, content, tier, importance, frequency, retrieval_count, is_procedural, keep_forever, forget_requested, created_at, updated_at, last_recall_at); retrieval_events table exists; FTS5 virtual table created",
+    "failure_symptom": "sqlite3.OperationalError 'no such table' or 'no such column'; FTS5 query fails; migrations incomplete from earlier version",
+    "likely_causes": [
+      "Database created by older plugin version (schema mismatch)",
+      "Manual schema modifications or deletions",
+      "Partial migration if plugin was interrupted during upgrade",
+      "db.sqlite file is wrong version from backup",
+      "Schema alter operations left table in inconsistent state"
+    ],
+    "fix_steps": [
+      "Check schema: python -c \"import sqlite3; conn=sqlite3.connect('$HOME/.forgetforge/db.sqlite'); print([col[1] for col in conn.execute('PRAGMA table_info(memories)').fetchall()])\"",
+      "Check FTS5 exists: python -c \"import sqlite3; conn=sqlite3.connect('$HOME/.forgetforge/db.sqlite'); conn.execute('SELECT COUNT(*) FROM memories_fts')\"",
+      "If schema missing, re-init cleanly: rm -rf ~/.forgetforge && forgetforge init",
+      "If only FTS5 missing, manually recreate: forgetforge prune (will recreate on demand during db.connect)",
+      "Backup old data first: sqlite3 ~/.forgetforge/db.sqlite '.dump memories' > memories_backup.sql"
+    ],
+    "change_robust": "Queries live schema introspection (PRAGMA table_info); detects schema drift at runtime. Checks after db.connect() to catch partial migrations.",
+    "detection_method": "PRAGMA table_info(memories); SELECT COUNT(*) FROM memories_fts; compare column names and count to expected schema in db.py SCHEMA constant"
+  },
+  {
+    "check_id": "wal_mode_enabled",
+    "category": "config",
+    "severity": "medium",
+    "what_it_checks": "SQLite WAL (Write-Ahead Logging) journal mode is enabled for better concurrency",
+    "failure_symptom": "PRAGMA journal_mode returns 'delete' or other mode; concurrent operations slow down or fail with 'database is locked'",
+    "likely_causes": [
+      "Filesystem or database opened without PRAGMA journal_mode = WAL set (old code path)",
+      "Filesystem does not support WAL (some network mounts, old filesystems)",
+      "WAL mode disabled in config or by manual SQL",
+      "Forced backend without WAL support"
+    ],
+    "fix_steps": [
+      "Verify current mode: python -c \"import sqlite3; conn=sqlite3.connect('$HOME/.forgetforge/db.sqlite'); print(conn.execute('PRAGMA journal_mode').fetchone()[0])\"",
+      "Explicitly enable WAL: python -c \"import sqlite3; conn=sqlite3.connect('$HOME/.forgetforge/db.sqlite'); conn.execute('PRAGMA journal_mode = WAL'); conn.close()\"",
+      "If filesystem issue, check for .sqlite-wal and .sqlite-shm files: ls -la ~/.forgetforge/db.sqlite* (should exist if WAL active)",
+      "For network mounts, use alternative filesystem or local disk for FORGETFORGE_HOME"
+    ],
+    "change_robust": "Probes live PRAGMA setting; detects configuration drift. Re-enabled automatically on next db.connect() by SCHEMA pragma.",
+    "detection_method": "PRAGMA journal_mode after connecting; expect 'wal' (case-insensitive)"
+  },
+  {
+    "check_id": "fts5_available",
+    "category": "native_backend",
+    "severity": "medium",
+    "what_it_checks": "SQLite FTS5 full-text search extension is compiled in and working",
+    "failure_symptom": "sqlite3.OperationalError 'no such module: fts5' when searching memories",
+    "likely_causes": [
+      "SQLite compiled without FTS5 extension (uncommon, most systems have it)",
+      "Incorrect SQLite version on system",
+      "Custom SQLite binary without FTS5"
+    ],
+    "fix_steps": [
+      "Check FTS5 support: python -c \"import sqlite3; conn=sqlite3.connect(':memory:'); conn.execute('CREATE VIRTUAL TABLE t USING fts5(c)')\" (no error = OK)",
+      "If missing, upgrade or rebuild Python (includes SQLite): pip install --upgrade python or use system package manager",
+      "Fallback to LIKE search is automatic (check db.search_memories fallback path)"
+    ],
+    "change_robust": "Tests FTS5 availability in live database; automatically handles missing FTS5 with LIKE fallback (slower but functional). Checked on each search operation.",
+    "detection_method": "CREATE VIRTUAL TABLE test_fts USING fts5(content); drop it after success"
+  },
+  {
+    "check_id": "config_file_loadable",
+    "category": "config",
+    "severity": "high",
+    "what_it_checks": "config.yaml at FORGETFORGE_HOME/config.yaml exists and parses correctly as valid YAML; pruner and threshold sections are dicts if present",
+    "failure_symptom": "FileNotFoundError, yaml.YAMLError, yaml.scanner.ScannerError; values are None or wrong type; defaults not applied",
+    "likely_causes": [
+      "config.yaml corrupted or syntax error (missing colons, bad indentation)",
+      "Non-mapping values in pruner or thresholds sections (list, scalar, null)",
+      "Non-numeric values in interval_hours or thresholds",
+      "config.yaml does not exist (uses defaults—not always bad)",
+      "Wrong HOME directory due to FORGETFORGE_HOME misconfiguration"
+    ],
+    "fix_steps": [
+      "Check YAML syntax: python -c \"import yaml; yaml.safe_load(open('$HOME/.forgetforge/config.yaml'))\"",
+      "Inspect values: python -c \"from forgetforge.config import load_config; cfg=load_config(); print(f'interval_hours={cfg.pruner_interval_hours}, cold_threshold={cfg.cold_retention_threshold}')\"",
+      "Restore from example: cp $PLUGIN_ROOT/config.yaml.example ~/.forgetforge/config.yaml",
+      "Or delete to use defaults: rm ~/.forgetforge/config.yaml (reinit will create it)",
+      "Validate all numeric values are 0-360 (hours), 0-1.0 (thresholds)"
+    ],
+    "change_robust": "Parses live YAML and validates ForgetForgeConfig type; detects malformed config at load time. Defaults gracefully if file missing.",
+    "detection_method": "load_config() succeeds; inspect loaded ForgetForgeConfig dataclass fields are all valid types (int, float, Path)"
+  },
+  {
+    "check_id": "forgetforge_home_env_valid",
+    "category": "config",
+    "severity": "critical",
+    "what_it_checks": "FORGETFORGE_HOME environment variable (if set) points to a valid, writable directory; if unset, defaults to ~/.forgetforge",
+    "failure_symptom": "FileNotFoundError, PermissionError, or OSError when trying to mkdir(parents=True)",
+    "likely_causes": [
+      "FORGETFORGE_HOME set to non-existent parent directory without write access",
+      "Path contains invalid characters or is too long",
+      "Home directory inaccessible (NFS mount down, permissions changed)",
+      "Disk full",
+      "User lost permissions on ~/.forgetforge after initial setup"
+    ],
+    "fix_steps": [
+      "Check FORGETFORGE_HOME: echo $FORGETFORGE_HOME",
+      "Verify it exists and is writable: mkdir -p \"$FORGETFORGE_HOME\" && touch \"$FORGETFORGE_HOME/test\" && rm \"$FORGETFORGE_HOME/test\"",
+      "If not set, check default: unset FORGETFORGE_HOME && python -c \"from forgetforge.config import default_home; print(default_home())\"",
+      "Fix permissions if needed: chmod 700 ~/.forgetforge",
+      "If using custom path in FORGETFORGE_HOME, ensure parent exists: mkdir -p $(dirname \"$FORGETFORGE_HOME\")"
+    ],
+    "change_robust": "Probes default_home() and expanduser() at runtime; validates directory creation. Checks before any DB operation.",
+    "detection_method": "Call default_home() from config.py; check Path.expanduser() handles ~; attempt to create subdirectory in target"
+  },
+  {
+    "check_id": "pyarrow_available_for_archive",
+    "category": "install",
+    "severity": "low",
+    "what_it_checks": "PyArrow library is installed for Parquet archive format; graceful fallback to JSONL if missing",
+    "failure_symptom": "Archive format is 'jsonl' (fallback), not 'parquet'; no .parquet files written; memory usage higher when archiving many cold memories",
+    "likely_causes": [
+      "PyArrow not installed (optional dependency)",
+      "PyArrow version incompatible with installed NumPy",
+      "system libarrow library missing (Linux/Mac ARM)"
+    ],
+    "fix_steps": [
+      "Install PyArrow: pip install pyarrow>=15.0",
+      "Verify: python -c \"import pyarrow; print(pyarrow.__version__)\"",
+      "If JSONL fallback is acceptable, no action required (archiving still works, just slower)",
+      "For better compression, ensure PyArrow available before large pruner runs"
+    ],
+    "change_robust": "Detects PyArrow at import time; archive operations fall back gracefully to JSONL format. Check performed during first archive operation.",
+    "detection_method": "import pyarrow; import pyarrow.parquet; call archive.write_cold_archive_batch() and check returned format field"
+  },
+  {
+    "check_id": "hot_injection_hook_wired",
+    "category": "native_backend",
+    "severity": "medium",
+    "what_it_checks": "Hermes plugin hook 'pre_llm_call' is registered (if running inside Hermes); hot context builder is callable",
+    "failure_symptom": "hot_context_payload() returns empty dict or raises error; hot memories not appearing in LLM context; hook not firing on pre_llm_call",
+    "likely_causes": [
+      "Plugin not loaded in Hermes (not in enabled plugins list in config.yaml)",
+      "register_hook not available in Hermes context (running outside Hermes)",
+      "Database error in hot_context builder prevents hook from executing",
+      "Hook registration fails due to typo or incompatible Hermes version"
+    ],
+    "fix_steps": [
+      "Verify plugin enabled in Hermes: grep -A5 'plugins:' ~/.hermes/config.yaml | grep 'cluxion-agentplugin-autoclearmemory'",
+      "Test hook manually: python -c \"from forgetforge.adapters.hermes import _pre_llm_hot_inject; print(_pre_llm_hot_inject())\"",
+      "Check Hermes logs: tail -f ~/.hermes/logs/*.log | grep -i forgetforge",
+      "Restart Hermes after enabling plugin: hermes stop && sleep 2 && hermes start",
+      "If Hermes has no register_hook method, plugin gracefully degrades (hook not registered, but tools still work)"
+    ],
+    "change_robust": "Probes hook registration at startup (detects if Hermes context available); hot_context_payload() can be called independently to test hook logic.",
+    "detection_method": "Call hot_inject.hot_context_payload(); inspect hermes.adapters.register() for register_hook presence; check Hermes logging for hook registration"
+  },
+  {
+    "check_id": "hermes_tool_schemas_valid",
+    "category": "config",
+    "severity": "high",
+    "what_it_checks": "All 7 Hermes tool schemas (forgetforge_store, recall, keep, forget, status, import_brief, hot_context) are valid JSON and have required 'name', 'description', 'parameters' keys",
+    "failure_symptom": "KeyError when accessing schema[key], json.JSONDecodeError, or schema validation fails in Hermes registry (tools don't appear in model list)",
+    "likely_causes": [
+      "schemas.py corrupted or has syntax error",
+      "Tool names don't match handler function signatures in hermes.py",
+      "Required parameter keys missing (e.g., 'type': 'object')",
+      "Enum values in schema don't match handler code (e.g., 'layer' enum vs actual layers)"
+    ],
+    "fix_steps": [
+      "Validate schema JSON: python -c \"from forgetforge.schemas import *; import json; [json.dumps(s) for s in [RECALL_SCHEMA, STORE_SCHEMA, KEEP_SCHEMA, FORGET_SCHEMA, STATUS_SCHEMA, IMPORT_BRIEF_SCHEMA, HOT_CONTEXT_SCHEMA]]\"",
+      "Check all tool names match: grep 'name.*forgetforge' src/forgetforge/schemas.py | wc -l (expect 7)",
+      "Verify enum values match code: grep -o '\"enum\": \\[.*\\]' src/forgetforge/schemas.py and cross-check with handlers",
+      "Re-install plugin: pip install --force-reinstall cluxion-Agentplugin-AutoClearMemory",
+      "Restart Hermes to re-register tools"
+    ],
+    "change_robust": "Validates schema structure at import time; JSON serialization ensures correctness before Hermes receives it. Schemas are static, checked on plugin load.",
+    "detection_method": "Import schemas module; validate each schema dict has required keys; attempt json.dumps() on each; call json.loads() to round-trip"
+  },
+  {
+    "check_id": "pruner_daemon_not_zombie",
+    "category": "runtime",
+    "severity": "medium",
+    "what_it_checks": "If pruner daemon is running (forgetforge pruner-daemon), it is alive, responsive, and not consuming excessive CPU/memory",
+    "failure_symptom": "Daemon process exists but is defunct (zombie), uses 100% CPU, or consumes gigabytes of memory; logs show repeated errors",
+    "likely_causes": [
+      "Parent shell exited without waiting for daemon (daemon became orphan, reparented to init)",
+      "Infinite loop in pruner.run_pruner() due to OOM or bad memory state",
+      "Database lock preventing pruner from completing, causing retry loop",
+      "Unhandled exception in pruner causes hang",
+      "Daemon started multiple times (multiple processes)"
+    ],
+    "fix_steps": [
+      "List all forgetforge processes: ps aux | grep forgetforge",
+      "Kill any stale daemon: pkill -9 'forgetforge.*pruner-daemon'",
+      "Check Hermes startup script doesn't auto-start daemon: grep -r 'pruner-daemon' ~/.hermes/",
+      "If daemon needed, restart in proper background/nohup: nohup forgetforge pruner-daemon > ~/.forgetforge/pruner.log 2>&1 &",
+      "Monitor logs: tail -f ~/.forgetforge/pruner.log",
+      "Check for repeated 'database is locked': if present, stop other access and retry"
+    ],
+    "change_robust": "Process check via ps; daemon is optional (pruner can run on demand). Detects zombies and resource leaks at runtime.",
+    "detection_method": "ps aux | grep 'forgetforge pruner-daemon' | grep -v grep; if found, test with kill -0 (check process exists); monitor RSS memory growth; log tail for errors"
+  },
+  {
+    "check_id": "hot_memory_tier_reachable",
+    "category": "data",
+    "severity": "high",
+    "what_it_checks": "Memories can reach 'hot' tier through normal recall operations; hot tier promotion is working (retrieval_count + layer boost + time decay)",
+    "failure_symptom": "Memory stuck in 'cold' or 'warm_episodic' tier after recall; hot_context always empty even after recalls; hot tier memories never injected",
+    "likely_causes": [
+      "days_since_recall calculation broken (returns NaN or inf)",
+      "Rust engine returns wrong tier decision despite valid inputs",
+      "Python fallback tier logic has bug (e.g., hot condition never true)",
+      "Retrieval boost calculation wrong (boost not applied or inverted)",
+      "Hot window days threshold misconfigured (set to 0 or very large)"
+    ],
+    "fix_steps": [
+      "Test manually: python -c \"from forgetforge import db, store, recall; from forgetforge.config import load_config; cfg=load_config(); conn=db.connect(cfg.db_path); store.store_memory(conn, memory_id='test', content='x', importance=0.7); results=recall.recall_query(conn, 'test'); print(f\\\"Tier: {db.get_memory(conn, 'test').tier}\\\"); conn.close()\"",
+      "Check days_since_recall: python -c \"from forgetforge.recall import days_since; import datetime; print(f\\\"days_since(now)={days_since(datetime.datetime.now(datetime.timezone.utc).isoformat())}\\\")\"",
+      "Verify hot window config: python -c \"from forgetforge.config import load_config; print(load_config().hot_window_days)\"",
+      "Force Python backend to test fallback: FORGETFORGE_ENGINE_BACKEND=python forgetforge recall test",
+      "Check rust_bridge._python_tier() logic directly with test cases"
+    ],
+    "change_robust": "Probes live recall and tier promotion; tests actual data path end-to-end. Detects logic bugs and config issues at runtime.",
+    "detection_method": "Store a memory, call recall_query(), check resulting memory.tier is 'hot' or 'warm_episodic'; inspect decision logic in recall.py and rust_bridge._python_tier()"
+  },
+  {
+    "check_id": "memory_id_validation",
+    "category": "data",
+    "severity": "high",
+    "what_it_checks": "Memory IDs are validated before storage: non-empty, unique, safe from SQL injection; duplicates handled correctly (upsert)",
+    "failure_symptom": "Empty memory_id crashes or creates NULL entries; SQL injection succeeds (unlikely with parameterized queries); duplicate IDs not updated, old value persists",
+    "likely_causes": [
+      "memory_id validation missing in store_memory (ValueError not raised for empty)",
+      "Memory ID not validated at db.upsert_memory level either",
+      "INSERT ... ON CONFLICT ... UPDATE logic doesn't properly update all fields",
+      "FTS upsert creates duplicates due to missing delete-first"
+    ],
+    "fix_steps": [
+      "Test empty ID: python -c \"from forgetforge import store; store.store_memory(None, memory_id='', content='test')\" (expect ValueError)",
+      "Test upsert: store same ID twice with different content, verify second call updates (not duplicate created)",
+      "Test special chars: store.store_memory(None, memory_id=\"id\\x00null\", content='test') (should sanitize or fail safely)",
+      "Verify parameterized queries: grep -n '?' src/forgetforge/db.py | head -20 (all placeholders, no string concat)",
+      "Check FTS upsert transaction: db._fts_upsert should DELETE before INSERT in single transaction"
+    ],
+    "change_robust": "Tests input validation at storage layer; detects SQLi via parameterized query inspection. Upsert semantics verified by comparing before/after snapshots.",
+    "detection_method": "Call store.store_memory() with edge cases: empty '', special chars, very long (500+ chars); verify no SQLi in search; check upsert semantics (UPDATE on conflict)"
+  },
+  {
+    "check_id": "retrieval_count_saturation",
+    "category": "data",
+    "severity": "medium",
+    "what_it_checks": "Retrieval counts and importance/frequency scores don't overflow or become negative; clamped to valid ranges [0.0, 1.0] for importance/frequency",
+    "failure_symptom": "Retrieval count becomes very large (1e6+) causing overflow in scoring; importance/frequency outside [0,1] causing undefined behavior in tier decisions; NaN in retention score",
+    "likely_causes": [
+      "No clamping in store.store_memory (importance/frequency accept any float)",
+      "Retrieval boost applied without saturation check (unbounded growth)",
+      "Rust engine doesn't handle NaN/inf gracefully",
+      "Python fallback scoring doesn't check max(0.0, ...) correctly"
+    ],
+    "fix_steps": [
+      "Check store_memory clamping: grep -A2 'max(0.0, min(1.0' src/forgetforge/store.py (should clamp importance/frequency)",
+      "Test extreme values: python -c \"from forgetforge import rust_bridge; result=rust_bridge.decide_tier(days_since_recall=1e6, retrieval_count=1e10, importance=100.0, frequency=-50.0); print(result)\" (expect valid tier, not NaN)",
+      "Verify Python fallback: FORGETFORGE_ENGINE_BACKEND=python ... (same test)",
+      "Check retrieval_count update logic: grep -B5 -A5 'retrieval_count =' src/forgetforge/recall.py (should accumulate, not reset)"
+    ],
+    "change_robust": "Tests with live API calls; extreme values probe boundary conditions. Detected during normal operation when very old or frequently accessed memories exist.",
+    "detection_method": "Update memory with extreme values: retrieval_count=1e6, importance=100.0, frequency=-50.0; check stored values are clamped; verify no NaN/inf in scoring"
+  },
+  {
+    "check_id": "contradiction_detection_optional",
+    "category": "data",
+    "severity": "low",
+    "what_it_checks": "Contradiction detection (if enabled) runs without blocking memory storage; detected contradictions are warnings, not errors",
+    "failure_symptom": "store_memory hangs or raises exception on contradiction detection; warnings list malformed or missing; detection always returns empty (disabled)",
+    "likely_causes": [
+      "contradiction.detect_contradictions() has infinite loop or blocks on DB lock",
+      "Warning structure doesn't match expectation (missing 'contradiction_type', 'details')",
+      "Exception in detection not caught, bubbles up",
+      "FTS search within detect_contradictions fails silently"
+    ],
+    "fix_steps": [
+      "Test with contradictions: python -c \"from forgetforge import store, db; from forgetforge.config import load_config; cfg=load_config(); conn=db.connect(cfg.db_path); store.store_memory(conn, memory_id='a', content='X is 1'); store.store_memory(conn, memory_id='b', content='X is 2', check_contradictions=True); conn.close()\"",
+      "Disable if problematic: set check_contradictions=False in hermes adapter handlers (or add flag to env var)",
+      "Verify exception handling in detect_contradictions: grep -A5 'except' src/forgetforge/contradiction.py"
+    ],
+    "change_robust": "Contradiction detection is best-effort (optional); storage proceeds even if detection fails. Checked during store operations with catch-all exception handler.",
+    "detection_method": "Call store_memory with check_contradictions=True; store conflicting memories; inspect returned warnings list"
+  },
+  {
+    "check_id": "cli_command_exit_codes",
+    "category": "runtime",
+    "severity": "low",
+    "what_it_checks": "CLI commands (forgetforge check, init, store, recall, etc.) return correct exit codes: 0 on success, 1 on not-found/validation error, 2 on usage error",
+    "failure_symptom": "Commands return 0 even on error (success masked); exit code 2 on data validation error (wrong semantics); error message to stdout instead of stderr",
+    "likely_causes": [
+      "cli.py handlers don't check return values or raise exceptions properly",
+      "print() to stdout instead of sys.stderr for errors",
+      "Missing 'if not ok: return 1' checks in handlers",
+      "argparse error doesn't exit 2 (customization broke defaults)"
+    ],
+    "fix_steps": [
+      "Test invalid memory_id: forgetforge keep nonexistent (expect exit 1)",
+      "Test no args: forgetforge (expect exit 2 + help to stderr)",
+      "Test store success: forgetforge store test --content 'x' (expect exit 0)",
+      "Test recall empty: forgetforge recall nonexistent (expect exit 0 + 'no_memories_matched')",
+      "Verify stderr: forgetforge 2>&1 | head -5 (should show usage/error)"
+    ],
+    "change_robust": "Exit codes are part of CLI contract; tested independently of Hermes. Check after each plugin update.",
+    "detection_method": "Run each CLI command with valid and invalid args; capture exit code; verify error messages to stderr"
+  }
+]

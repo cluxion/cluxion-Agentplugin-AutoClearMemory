@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from pathlib import Path
 
 from forgetforge import db, hot_inject, import_brief
 from forgetforge import store as store_api
 from forgetforge.config import load_config
+from forgetforge.doctor import render_json, run_doctor
+from forgetforge.doctor.probes import PROBES
 from forgetforge.schemas import (
     FORGET_SCHEMA,
     HOT_CONTEXT_SCHEMA,
@@ -67,6 +70,25 @@ def register(ctx: object) -> None:
         handler=_wrap(_handle_hot_context),
         emoji="🔥",
     )
+    # doctor tool
+    DOCTOR_SCHEMA = {
+        "name": "forgetforge_doctor",
+        "description": "Run the embedded forgetforge doctor checks for installation, Hermes contract, DB health, and runtime integrity.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "verbose": {"type": "boolean", "description": "Include verbose details in output"}
+            },
+            "additionalProperties": False,
+        },
+    }
+    ctx.register_tool(
+        name="forgetforge_doctor",
+        toolset="forgetforge",
+        schema=DOCTOR_SCHEMA,
+        handler=_wrap(_handle_doctor),
+        emoji="🩺",
+    )
     register_hook = getattr(ctx, "register_hook", None)
     if callable(register_hook):
         register_hook("pre_llm_call", _pre_llm_hot_inject)
@@ -92,6 +114,25 @@ def _wrap(callback: Callable[[dict[str, object]], dict[str, object]]) -> Callabl
 def _conn():
     cfg = load_config()
     return db.connect(cfg.db_path)
+
+
+def _handle_doctor(args: dict[str, object]) -> dict[str, object]:
+    verbose = bool(args.get("verbose", False))
+    try:
+        pkg = "forgetforge.doctor"
+        import importlib.resources
+        cat_path = Path(str(importlib.resources.files(pkg).joinpath("catalog.json")))
+    except Exception:
+        cat_path = Path(__file__).parent.parent.parent / "doctor" / "catalog.json"
+    result = run_doctor(
+        cwd=Path.cwd(),
+        catalog_path=cat_path,
+        probes=PROBES,
+        plugin="autoclearmemory",
+        version=__import__("forgetforge").__version__,
+    )
+    # return dict so _wrap json.dumps it; include the rendered json too
+    return {"ok": result.ok, "doctor_json": render_json(result), "checks_count": len(result.checks)}
 
 
 def _handle_store(args: dict[str, object]) -> dict[str, object]:
