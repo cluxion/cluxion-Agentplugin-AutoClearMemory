@@ -1,9 +1,6 @@
 """Tests for embedded doctor (determinism + cross-cutting checks)."""
 
-import json
 from pathlib import Path
-
-import pytest
 
 from forgetforge.doctor import (
     DoctorResult,
@@ -64,10 +61,15 @@ def test_probe_exception_becomes_fail():
     def bad_probe(ctx):
         raise RuntimeError("boom")
 
-    probes = {"hermes_on_path": bad_probe}
-    cat = _catalog_path()
-    from forgetforge.doctor.framework import CheckResult, run_doctor as rd
-    assert True
+    result = run_doctor(
+        cwd=Path.cwd(),
+        catalog_path=_catalog_path(),
+        probes={"hermes_on_path": bad_probe},
+        plugin="autoclearmemory",
+        version="0.3.4",
+    )
+    statuses = {c.check_id: c.status for c in result.checks}
+    assert statuses["hermes_on_path"] == "fail"
 
 
 def test_warn_only_is_ok():
@@ -77,4 +79,3 @@ def test_warn_only_is_ok():
     )
     r = DoctorResult(plugin="p", version="0.3.4", checks=checks)
     assert r.ok is True
-    assert True

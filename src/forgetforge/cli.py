@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import importlib.resources
 import json
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from forgetforge import __version__, db, hot_inject, import_brief, init_assets, pruner, rust_bridge, store
@@ -10,8 +12,6 @@ from forgetforge.config import default_home, load_config
 from forgetforge.doctor import render_json, render_text, run_doctor
 from forgetforge.doctor.framework import load_catalog
 from forgetforge.doctor.probes import PROBES
-import importlib.resources
-from pathlib import Path
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

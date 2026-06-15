@@ -117,7 +117,6 @@ def _conn():
 
 
 def _handle_doctor(args: dict[str, object]) -> dict[str, object]:
-    verbose = bool(args.get("verbose", False))
     try:
         pkg = "forgetforge.doctor"
         import importlib.resources
