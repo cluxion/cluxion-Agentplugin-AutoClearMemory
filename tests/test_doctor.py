@@ -108,18 +108,23 @@ def test_warn_only_is_ok():
     assert r.summary == "ok"
 
 
-def test_critical_skip_marks_degraded_summary():
+def test_critical_skip_marks_degraded_summary(tmp_path, monkeypatch):
+    """Critical DB probes SKIP when no db exists → summary degraded (CI-safe)."""
+    monkeypatch.setenv("FORGETFORGE_HOME", str(tmp_path))
+    assert not (tmp_path / "db.sqlite").exists()
     cat = _catalog_path()
-    partial = {k: v for k, v in PROBES.items() if k != "database_file_exists_and_readable"}
+    # handler_exception_coverage runs before DB probes and opens the real db via _conn().
+    probes = {k: v for k, v in PROBES.items() if k != "handler_exception_coverage"}
     result = run_doctor(
         cwd=Path.cwd(),
         catalog_path=cat,
-        probes=partial,
+        probes=probes,
         plugin="autoclearmemory",
         version="0.3.5",
     )
     statuses = {c.check_id: c.status for c in result.checks}
     assert statuses["database_file_exists_and_readable"] == "skip"
+    assert statuses["database_schema_current"] == "skip"
     assert result.summary == "degraded"
     assert result.ok is False
     payload = json.loads(render_json(result))
@@ -150,6 +155,21 @@ def test_db_probes_pass_with_isolated_home(tmp_path, monkeypatch):
     assert database_file_exists_and_readable(ctx) == ("pass", str(tmp_path / "db.sqlite"))
     assert database_schema_current(ctx)[0] == "pass"
     assert hot_memory_tier_reachable(ctx) == ("pass", "hot tier query ok")
+
+
+def test_db_probes_fail_with_corrupt_db(tmp_path, monkeypatch):
+    from forgetforge.doctor.probes import (
+        database_file_exists_and_readable,
+        database_schema_current,
+    )
+
+    monkeypatch.setenv("FORGETFORGE_HOME", str(tmp_path))
+    db_path = tmp_path / "db.sqlite"
+    db_path.write_text("not a sqlite database", encoding="utf-8")
+
+    ctx = _doctor_ctx()
+    assert database_file_exists_and_readable(ctx)[0] == "fail"
+    assert database_schema_current(ctx)[0] == "fail"
 
 
 def test_static_high_probes_registered_and_pass():

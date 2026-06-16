@@ -264,7 +264,7 @@ def hot_injection_hook_wired(ctx: DoctorContext) -> tuple[str, str]:
 def database_file_exists_and_readable(ctx: DoctorContext) -> tuple[str, str]:
     db_path = _forgetforge_db_path()
     if not db_path.exists():
-        return "fail", f"db missing at {db_path}"
+        return "skip", "no database yet — nothing to verify"
     try:
         conn = _connect_readonly(db_path)
         try:
@@ -280,7 +280,7 @@ def database_file_exists_and_readable(ctx: DoctorContext) -> tuple[str, str]:
 def database_schema_current(ctx: DoctorContext) -> tuple[str, str]:
     db_path = _forgetforge_db_path()
     if not db_path.exists():
-        return "fail", f"db missing at {db_path}"
+        return "skip", "no database yet — nothing to verify"
     try:
         conn = _connect_readonly(db_path)
         try:
