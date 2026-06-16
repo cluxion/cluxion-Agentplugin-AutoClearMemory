@@ -1,5 +1,7 @@
 """Tests for embedded doctor (determinism + cross-cutting checks)."""
 
+import json
+import subprocess
 from pathlib import Path
 
 from forgetforge.doctor import (
@@ -7,6 +9,7 @@ from forgetforge.doctor import (
     render_json,
     run_doctor,
 )
+from forgetforge.doctor.framework import DoctorContext
 from forgetforge.doctor.probes import PROBES
 
 
@@ -102,3 +105,59 @@ def test_warn_only_is_ok():
     )
     r = DoctorResult(plugin="p", version="0.3.5", checks=checks)
     assert r.ok is True
+    assert r.summary == "ok"
+
+
+def test_critical_skip_marks_degraded_summary():
+    cat = _catalog_path()
+    partial = {k: v for k, v in PROBES.items() if k != "database_file_exists_and_readable"}
+    result = run_doctor(
+        cwd=Path.cwd(),
+        catalog_path=cat,
+        probes=partial,
+        plugin="autoclearmemory",
+        version="0.3.5",
+    )
+    statuses = {c.check_id: c.status for c in result.checks}
+    assert statuses["database_file_exists_and_readable"] == "skip"
+    assert result.summary == "degraded"
+    assert result.ok is False
+    payload = json.loads(render_json(result))
+    assert payload["summary"] == "degraded"
+    assert payload["ok"] is False
+
+
+def _doctor_ctx() -> DoctorContext:
+    return DoctorContext(
+        cwd=Path.cwd(),
+        hermes_bin="hermes",
+        run=lambda cmd: subprocess.CompletedProcess(cmd, 0, "", ""),
+    )
+
+
+def test_db_probes_pass_with_isolated_home(tmp_path, monkeypatch):
+    from forgetforge import db
+    from forgetforge.doctor.probes import (
+        database_file_exists_and_readable,
+        database_schema_current,
+        hot_memory_tier_reachable,
+    )
+
+    monkeypatch.setenv("FORGETFORGE_HOME", str(tmp_path))
+    db.connect(tmp_path / "db.sqlite").close()
+
+    ctx = _doctor_ctx()
+    assert database_file_exists_and_readable(ctx) == ("pass", str(tmp_path / "db.sqlite"))
+    assert database_schema_current(ctx)[0] == "pass"
+    assert hot_memory_tier_reachable(ctx) == ("pass", "hot tier query ok")
+
+
+def test_static_high_probes_registered_and_pass():
+    from forgetforge.doctor.probes import (
+        hermes_tool_schemas_valid,
+        memory_id_validation,
+    )
+
+    ctx = _doctor_ctx()
+    assert hermes_tool_schemas_valid(ctx)[0] == "pass"
+    assert memory_id_validation(ctx)[0] == "pass"

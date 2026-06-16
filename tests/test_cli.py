@@ -83,8 +83,25 @@ def test_keep_and_forget_exit_codes(capsys: pytest.CaptureFixture[str]) -> None:
     assert code == 0 and payload["ok"] is True
     assert _run(capsys, "keep", "missing")[0] == 1
     code, payload = _run(capsys, "forget", "m-keep")
-    assert code == 0 and payload["ok"] is True
+    assert code == 1 and payload["ok"] is False
+    assert payload["reason"] == "kept memory cannot be forgotten"
     assert _run(capsys, "forget", "missing")[0] == 1
+
+
+def test_forget_unforget_and_list_forgotten_cli(capsys: pytest.CaptureFixture[str]) -> None:
+    _run(capsys, "store", "m-temp", "--content", "ephemeral fact about ports")
+    code, payload = _run(capsys, "forget", "m-temp")
+    assert code == 0 and payload["ok"] is True
+    code, recalled = _run(capsys, "recall", "ephemeral")
+    assert code == 0 and recalled["count"] == 0
+    code, listed = _run(capsys, "list-forgotten")
+    assert code == 0 and listed["count"] == 1
+    assert listed["memories"][0]["memory_id"] == "m-temp"
+    code, payload = _run(capsys, "unforget", "m-temp")
+    assert code == 0 and payload["ok"] is True
+    code, recalled = _run(capsys, "recall", "ephemeral")
+    assert code == 0 and recalled["count"] == 1
+    assert recalled["results"][0]["content"] == "ephemeral fact about ports"
 
 
 def test_prune_runs_on_empty_db(capsys: pytest.CaptureFixture[str]) -> None:

@@ -295,14 +295,65 @@ def mark_keep_forever(conn: sqlite3.Connection, memory_id: str) -> bool:
     return cur.rowcount > 0
 
 
-def mark_forget(conn: sqlite3.Connection, memory_id: str) -> bool:
-    cur = conn.execute(
+def mark_forget(conn: sqlite3.Connection, memory_id: str, *, force: bool = False) -> dict[str, Any]:
+    row = get_memory(conn, memory_id)
+    if row is None:
+        return {"ok": False, "reason": "memory not found", "memory_id": memory_id}
+    if row.keep_forever and not force:
+        return {"ok": False, "reason": "kept memory cannot be forgotten", "memory_id": memory_id}
+    conn.execute(
         "UPDATE memories SET forget_requested = 1, tier = 'cold', updated_at = ? WHERE id = ?",
         (now_iso(), memory_id),
     )
     _fts_delete(conn, memory_id)
     conn.commit()
-    return cur.rowcount > 0
+    return {"ok": True, "memory_id": memory_id}
+
+
+def _restore_tier_for_unforget(row: MemoryRow) -> str:
+    if row.keep_forever:
+        return "warm_semantic"
+    from forgetforge import recall, rust_bridge
+
+    days = recall.days_since(row.last_recall_at)
+    decision = rust_bridge.decide_tier(
+        days_since_recall=days,
+        retrieval_count=row.retrieval_count,
+        importance=row.importance,
+        frequency=row.frequency,
+        is_procedural=row.is_procedural,
+        keep_forever=row.keep_forever,
+    )
+    return str(decision["tier"])
+
+
+def unforget(conn: sqlite3.Connection, memory_id: str) -> dict[str, Any]:
+    row = get_memory(conn, memory_id)
+    if row is None:
+        return {"ok": False, "reason": "memory not found", "memory_id": memory_id}
+    if not row.forget_requested:
+        return {"ok": False, "reason": "memory is not forgotten", "memory_id": memory_id}
+    tier = _restore_tier_for_unforget(row)
+    conn.execute(
+        "UPDATE memories SET forget_requested = 0, tier = ?, updated_at = ? WHERE id = ?",
+        (tier, now_iso(), memory_id),
+    )
+    _fts_upsert(conn, memory_id, row.content)
+    conn.commit()
+    return {"ok": True, "memory_id": memory_id, "tier": tier}
+
+
+def list_forgotten_memories(conn: sqlite3.Connection, *, limit: int = 100) -> list[MemoryRow]:
+    cur = conn.execute(
+        """
+        SELECT * FROM memories
+        WHERE forget_requested = 1
+        ORDER BY updated_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    return [_row_to_memory(row) for row in cur.fetchall()]
 
 
 def memory_stats(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -346,12 +397,14 @@ __all__ = [
     "bump_recall_stats",
     "connect",
     "get_memory",
+    "list_forgotten_memories",
     "list_hot_memories",
     "list_memories",
     "mark_forget",
     "mark_keep_forever",
     "memory_stats",
     "search_memories",
+    "unforget",
     "update_memory_state",
     "update_memory_tiers",
     "upsert_memory",

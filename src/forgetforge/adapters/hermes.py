@@ -17,6 +17,7 @@ from forgetforge.schemas import (
     RECALL_SCHEMA,
     STATUS_SCHEMA,
     STORE_SCHEMA,
+    UNFORGET_SCHEMA,
 )
 
 
@@ -55,6 +56,13 @@ def register(ctx: object) -> None:
         schema=FORGET_SCHEMA,
         handler=_wrap(_handle_forget),
         emoji="🗑️",
+    )
+    ctx.register_tool(
+        name="forgetforge_unforget",
+        toolset="forgetforge",
+        schema=UNFORGET_SCHEMA,
+        handler=_wrap(_handle_unforget),
+        emoji="♻️",
     )
     ctx.register_tool(
         name="forgetforge_import_brief",
@@ -196,8 +204,18 @@ def _handle_forget(args: dict[str, object]) -> dict[str, object]:
         raise ValueError("memory_id is required")
     conn = _conn()
     try:
-        ok = db.mark_forget(conn, memory_id)
-        return {"ok": ok, "memory_id": memory_id}
+        return db.mark_forget(conn, memory_id, force=bool(args.get("force", False)))
+    finally:
+        conn.close()
+
+
+def _handle_unforget(args: dict[str, object]) -> dict[str, object]:
+    memory_id = str(args.get("memory_id", "")).strip()
+    if not memory_id:
+        raise ValueError("memory_id is required")
+    conn = _conn()
+    try:
+        return db.unforget(conn, memory_id)
     finally:
         conn.close()
 

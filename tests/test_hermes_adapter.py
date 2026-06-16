@@ -16,6 +16,7 @@ _EXPECTED_TOOLS = {
     "forgetforge_status",
     "forgetforge_keep",
     "forgetforge_forget",
+    "forgetforge_unforget",
     "forgetforge_import_brief",
     "forgetforge_hot_context",
     "forgetforge_doctor",
@@ -105,6 +106,26 @@ def test_hot_context_hook_payload_shape() -> None:
     assert tool_payload["has_hot"] == bool(tool_payload["context"])
 
 
+def test_forget_refuses_keep_and_unforget_recovers() -> None:
+    ctx = FakeCtx()
+    hermes.register(ctx)
+    _call(ctx, "forgetforge_store", {"memory_id": "m-pin", "content": "pinned redis port 6380"})
+    _call(ctx, "forgetforge_keep", {"memory_id": "m-pin"})
+    refused = _call(ctx, "forgetforge_forget", {"memory_id": "m-pin"})
+    assert refused["ok"] is False
+    assert refused["reason"] == "kept memory cannot be forgotten"
+    _call(ctx, "forgetforge_store", {"memory_id": "m-temp", "content": "temporary redis note"})
+    forgot = _call(ctx, "forgetforge_forget", {"memory_id": "m-temp"})
+    assert forgot["ok"] is True
+    missed = _call(ctx, "forgetforge_recall", {"query": "temporary", "layer": "explicit"})
+    assert missed["count"] == 0
+    restored = _call(ctx, "forgetforge_unforget", {"memory_id": "m-temp"})
+    assert restored["ok"] is True
+    recalled = _call(ctx, "forgetforge_recall", {"query": "temporary", "layer": "explicit"})
+    assert recalled["count"] == 1
+    assert recalled["results"][0]["content"] == "temporary redis note"
+
+
 def test_schemas_are_full_function_specs() -> None:
     # The hermes registry ships each schema verbatim as {"type": "function",
     # "function": schema}; a bare parameters object reaches the model with no
@@ -121,7 +142,7 @@ def test_schemas_are_full_function_specs() -> None:
 
     recorder = _Recorder()
     hermes.register(recorder)
-    assert len(recorder.pairs) == 8
+    assert len(recorder.pairs) == 9
     for name, schema in recorder.pairs:
         assert schema["name"] == name
         assert schema["description"].strip()

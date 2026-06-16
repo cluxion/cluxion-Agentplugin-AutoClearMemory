@@ -46,13 +46,22 @@ class DoctorResult:
     checks: tuple[CheckResult, ...]
 
     @property
+    def summary(self) -> str:
+        if any(c.status == "fail" for c in self.checks):
+            return "fail"
+        if any(c.severity == "critical" and c.status == "skip" for c in self.checks):
+            return "degraded"
+        return "ok"
+
+    @property
     def ok(self) -> bool:
-        return not any(c.status == "fail" for c in self.checks)
+        return self.summary == "ok"
 
     def to_json_object(self) -> dict[str, Any]:
         return {
             "plugin": self.plugin,
             "version": self.version,
+            "summary": self.summary,
             "checks": [
                 {
                     "check_id": c.check_id,

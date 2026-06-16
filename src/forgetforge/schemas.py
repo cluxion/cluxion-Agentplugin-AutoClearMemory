@@ -49,7 +49,23 @@ KEEP_SCHEMA = {
 
 FORGET_SCHEMA = {
     "name": "forgetforge_forget",
-    "description": "Mark a memory for forgetting; it drops to cold tier and stops surfacing.",
+    "description": "Mark a memory for forgetting; it drops to cold tier and stops surfacing. keep_forever memories are refused unless force is true.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "memory_id": {"type": "string"},
+            "force": {
+                "type": "boolean",
+                "description": "Override keep_forever protection (default false).",
+            },
+        },
+        "required": ["memory_id"],
+    },
+}
+
+UNFORGET_SCHEMA = {
+    "name": "forgetforge_unforget",
+    "description": "Restore a soft-forgotten memory without changing its content.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -113,4 +129,5 @@ __all__ = [
     "RECALL_SCHEMA",
     "STATUS_SCHEMA",
     "STORE_SCHEMA",
+    "UNFORGET_SCHEMA",
 ]

@@ -3,14 +3,34 @@
 from __future__ import annotations
 
 import importlib.metadata
+import json
 import shutil
 import sqlite3
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
 import yaml
 
 from .framework import DoctorContext
+
+_EXPECTED_MEMORY_COLUMNS = frozenset(
+    {
+        "id",
+        "content",
+        "tier",
+        "importance",
+        "frequency",
+        "retrieval_count",
+        "is_procedural",
+        "keep_forever",
+        "forget_requested",
+        "created_at",
+        "updated_at",
+        "last_recall_at",
+    }
+)
+_SCHEMA_REQUIRED_KEYS = ("name", "description", "parameters")
 
 PROBES: dict[str, Callable[[DoctorContext], tuple[str, str]]] = {}
 
@@ -21,6 +41,17 @@ def _register(name: str):
         return fn
 
     return deco
+
+
+def _forgetforge_db_path() -> Path:
+    from forgetforge.config import default_home
+
+    return default_home() / "db.sqlite"
+
+
+def _connect_readonly(db_path: Path) -> sqlite3.Connection:
+    uri = f"file:{db_path.resolve()}?mode=ro"
+    return sqlite3.connect(uri, uri=True, timeout=5.0)
 
 
 @_register("hermes_on_path")
@@ -227,6 +258,135 @@ def hot_injection_hook_wired(ctx: DoctorContext) -> tuple[str, str]:
         return "warn", "not in plugins.enabled"
     except Exception as e:
         return "skip", f"hermes config read error: {type(e).__name__}"
+
+
+@_register("database_file_exists_and_readable")
+def database_file_exists_and_readable(ctx: DoctorContext) -> tuple[str, str]:
+    db_path = _forgetforge_db_path()
+    if not db_path.exists():
+        return "fail", f"db missing at {db_path}"
+    try:
+        conn = _connect_readonly(db_path)
+        try:
+            conn.execute("SELECT 1").fetchone()
+            return "pass", str(db_path)
+        finally:
+            conn.close()
+    except Exception as e:
+        return "fail", f"read error: {type(e).__name__}: {e}"
+
+
+@_register("database_schema_current")
+def database_schema_current(ctx: DoctorContext) -> tuple[str, str]:
+    db_path = _forgetforge_db_path()
+    if not db_path.exists():
+        return "fail", f"db missing at {db_path}"
+    try:
+        conn = _connect_readonly(db_path)
+        try:
+            memory_cols = {
+                str(row[1])
+                for row in conn.execute("PRAGMA table_info(memories)").fetchall()
+            }
+            missing = sorted(_EXPECTED_MEMORY_COLUMNS - memory_cols)
+            if missing:
+                return "fail", f"memories missing columns: {', '.join(missing)}"
+            conn.execute("SELECT 1 FROM retrieval_events LIMIT 1")
+            conn.execute("SELECT COUNT(*) FROM memories_fts").fetchone()
+            return "pass", f"memories({len(memory_cols)} cols), retrieval_events, memories_fts"
+        except sqlite3.OperationalError as e:
+            return "fail", f"schema error: {e}"
+        finally:
+            conn.close()
+    except Exception as e:
+        return "fail", f"read error: {type(e).__name__}: {e}"
+
+
+@_register("hermes_tool_schemas_valid")
+def hermes_tool_schemas_valid(ctx: DoctorContext) -> tuple[str, str]:
+    try:
+        from forgetforge.schemas import (
+            FORGET_SCHEMA,
+            HOT_CONTEXT_SCHEMA,
+            IMPORT_BRIEF_SCHEMA,
+            KEEP_SCHEMA,
+            RECALL_SCHEMA,
+            STATUS_SCHEMA,
+            STORE_SCHEMA,
+            UNFORGET_SCHEMA,
+        )
+
+        schemas = (
+            RECALL_SCHEMA,
+            STATUS_SCHEMA,
+            KEEP_SCHEMA,
+            FORGET_SCHEMA,
+            UNFORGET_SCHEMA,
+            STORE_SCHEMA,
+            IMPORT_BRIEF_SCHEMA,
+            HOT_CONTEXT_SCHEMA,
+        )
+        for schema in schemas:
+            for key in _SCHEMA_REQUIRED_KEYS:
+                if key not in schema:
+                    return "fail", f"{schema.get('name', '?')} missing {key}"
+            params = schema.get("parameters")
+            if not isinstance(params, dict) or params.get("type") != "object":
+                return "fail", f"{schema['name']} parameters must be type object"
+            json.loads(json.dumps(schema))
+        return "pass", f"{len(schemas)} schemas valid"
+    except Exception as e:
+        return "fail", f"schema error: {type(e).__name__}: {e}"
+
+
+@_register("memory_id_validation")
+def memory_id_validation(ctx: DoctorContext) -> tuple[str, str]:
+    from forgetforge import db, store
+
+    try:
+        store.store_memory(None, memory_id="", content="x")  # type: ignore[arg-type]
+        return "fail", "empty memory_id did not raise"
+    except ValueError:
+        pass
+    except Exception as e:
+        return "fail", f"unexpected error for empty id: {type(e).__name__}: {e}"
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "probe.sqlite"
+            conn = db.connect(db_path)
+            try:
+                store.store_memory(conn, memory_id="doctor-probe", content="first")
+                store.store_memory(conn, memory_id="doctor-probe", content="second")
+                row = db.get_memory(conn, "doctor-probe")
+                if row is None or row.content != "second":
+                    return "fail", "upsert did not update content"
+            finally:
+                conn.close()
+        return "pass", "empty rejected; upsert updates content"
+    except Exception as e:
+        return "fail", f"validation error: {type(e).__name__}: {e}"
+
+
+@_register("hot_memory_tier_reachable")
+def hot_memory_tier_reachable(ctx: DoctorContext) -> tuple[str, str]:
+    db_path = _forgetforge_db_path()
+    if not db_path.exists():
+        return "skip", "db not present yet"
+    try:
+        conn = _connect_readonly(db_path)
+        try:
+            conn.execute(
+                """
+                SELECT COUNT(*) FROM memories
+                WHERE tier = 'hot' AND forget_requested = 0
+                """
+            ).fetchone()
+            return "pass", "hot tier query ok"
+        finally:
+            conn.close()
+    except Exception as e:
+        return "fail", f"query error: {type(e).__name__}: {e}"
 
 
 # note: other checks in catalog will be reported as skip (no probe)

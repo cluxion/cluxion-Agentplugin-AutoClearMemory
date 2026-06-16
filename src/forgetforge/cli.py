@@ -33,6 +33,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _keep(args)
     if args.command == "forget":
         return _forget(args)
+    if args.command == "unforget":
+        return _unforget(args)
+    if args.command == "list-forgotten":
+        return _list_forgotten(args)
     if args.command == "prune":
         return _prune()
     if args.command == "store":
@@ -63,6 +67,11 @@ def _parser() -> argparse.ArgumentParser:
     keep.add_argument("memory_id")
     forget = sub.add_parser("forget", help="Mark memory for forgetting")
     forget.add_argument("memory_id")
+    forget.add_argument("--force", action="store_true", help="Allow forgetting a keep_forever memory")
+    unforget = sub.add_parser("unforget", help="Restore a soft-forgotten memory")
+    unforget.add_argument("memory_id")
+    list_forgotten = sub.add_parser("list-forgotten", help="List soft-forgotten memories for recovery")
+    list_forgotten.add_argument("--limit", type=int, default=100)
     sub.add_parser("prune", help="Run background pruner once")
     store_cmd = sub.add_parser("store", help="Store or update a memory")
     store_cmd.add_argument("memory_id")
@@ -229,10 +238,49 @@ def _forget(args: argparse.Namespace) -> int:
     try:
         cfg = load_config()
         conn = db.connect(cfg.db_path)
-        ok = db.mark_forget(conn, str(args.memory_id))
+        result = db.mark_forget(conn, str(args.memory_id), force=bool(args.force))
         conn.close()
-        print(json.dumps({"ok": ok, "memory_id": args.memory_id}, ensure_ascii=False))
-        return 0 if ok else 1
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result.get("ok") else 1
+    except (sqlite3.Error, OSError, FileExistsError) as e:
+        print(json.dumps({'ok': False, 'error': str(e), 'error_type': type(e).__name__}, ensure_ascii=False))
+        return 1
+
+
+def _unforget(args: argparse.Namespace) -> int:
+    try:
+        cfg = load_config()
+        conn = db.connect(cfg.db_path)
+        result = db.unforget(conn, str(args.memory_id))
+        conn.close()
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result.get("ok") else 1
+    except (sqlite3.Error, OSError, FileExistsError) as e:
+        print(json.dumps({'ok': False, 'error': str(e), 'error_type': type(e).__name__}, ensure_ascii=False))
+        return 1
+
+
+def _list_forgotten(args: argparse.Namespace) -> int:
+    try:
+        cfg = load_config()
+        conn = db.connect(cfg.db_path)
+        rows = db.list_forgotten_memories(conn, limit=int(args.limit))
+        conn.close()
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "count": len(rows),
+                    "memories": [
+                        {"memory_id": row.id, "content": row.content, "tier": row.tier, "keep_forever": row.keep_forever}
+                        for row in rows
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
     except (sqlite3.Error, OSError, FileExistsError) as e:
         print(json.dumps({'ok': False, 'error': str(e), 'error_type': type(e).__name__}, ensure_ascii=False))
         return 1
