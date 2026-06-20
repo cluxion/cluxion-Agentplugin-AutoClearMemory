@@ -80,3 +80,64 @@ def test_score_memories_pins_keep_forever_retention(conn) -> None:
 
 def test_score_memories_empty_is_empty() -> None:
     assert recall.score_memories([]) == []
+
+
+def test_recall_golden_multi_match_stats(conn) -> None:
+    """Golden baseline: tiers and stats after multi-match recall match pre-opt behavior."""
+    db.upsert_memory(
+        conn,
+        memory_id="a",
+        content="alpha project uses redis cache",
+        importance=0.6,
+        frequency=0.1,
+    )
+    db.upsert_memory(
+        conn,
+        memory_id="b",
+        content="beta project uses redis queue",
+        importance=0.4,
+        frequency=0.0,
+    )
+    db.upsert_memory(conn, memory_id="c", content="gamma unrelated topic", importance=0.5, frequency=0.2)
+    conn.commit()
+
+    results = recall.recall_query(conn, "redis", layer="implicit")
+    assert len(results) == 2
+    assert {result.memory_id for result in results} == {"a", "b"}
+
+    row_a = db.get_memory(conn, "a")
+    row_b = db.get_memory(conn, "b")
+    row_c = db.get_memory(conn, "c")
+    assert row_a is not None and row_b is not None and row_c is not None
+
+    implicit_boost = 0.35
+    implicit_importance_delta = 0.02
+    frequency_delta = 0.05
+    assert row_a.retrieval_count == pytest.approx(implicit_boost)
+    assert row_b.retrieval_count == pytest.approx(implicit_boost)
+    assert row_a.tier == "hot"
+    assert row_b.tier == "hot"
+    assert row_a.importance == pytest.approx(0.6 + implicit_importance_delta)
+    assert row_b.importance == pytest.approx(0.4 + implicit_importance_delta)
+    assert row_a.frequency == pytest.approx(0.1 + frequency_delta)
+    assert row_b.frequency == pytest.approx(0.0 + frequency_delta)
+    assert row_c.retrieval_count == 0.0
+    assert row_c.tier == "warm_episodic"
+    assert row_c.importance == pytest.approx(0.5)
+    assert row_c.frequency == pytest.approx(0.2)
+
+
+def test_record_retrieval_skips_redundant_get_memory(conn, monkeypatch: pytest.MonkeyPatch) -> None:
+    db.upsert_memory(conn, memory_id="solo", content="solo redis tuning note")
+    conn.commit()
+    calls: list[str] = []
+    original_get_memory = db.get_memory
+
+    def counting_get_memory(connection, memory_id: str):
+        calls.append(memory_id)
+        return original_get_memory(connection, memory_id)
+
+    monkeypatch.setattr(db, "get_memory", counting_get_memory)
+    recorded = recall.record_retrieval(conn, memory_id="solo", layer="explicit")
+    assert recorded is not None
+    assert calls == ["solo"]

@@ -6,6 +6,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+_initialized_db_paths: set[str] = set()
+
 SCHEMA = """
 PRAGMA journal_mode = WAL;
 
@@ -63,12 +65,21 @@ def connect(db_path: Path | str) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA busy_timeout=5000")
     conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA)
-    _ensure_fts(conn)
+    path_key = str(db_path.resolve())
+    if path_key not in _initialized_db_paths:
+        conn.executescript(SCHEMA)
+        _ensure_fts(conn)
+        _initialized_db_paths.add(path_key)
     return conn
 
 
 def _ensure_fts(conn: sqlite3.Connection) -> None:
+    had_fts = (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memories_fts' LIMIT 1"
+        ).fetchone()
+        is not None
+    )
     conn.execute(
         """
         CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
@@ -79,11 +90,17 @@ def _ensure_fts(conn: sqlite3.Connection) -> None:
         """
     )
     conn.commit()
-    existing = conn.execute("SELECT COUNT(*) AS c FROM memories_fts").fetchone()
-    memory_count = conn.execute("SELECT COUNT(*) AS c FROM memories WHERE forget_requested = 0").fetchone()
-    if existing and memory_count and int(existing["c"]) == 0 and int(memory_count["c"]) > 0:
-        for row in conn.execute("SELECT id, content FROM memories WHERE forget_requested = 0"):
-            _fts_upsert(conn, str(row["id"]), str(row["content"]))
+    needs_backfill_probe = not had_fts
+    if not needs_backfill_probe:
+        has_memory = conn.execute("SELECT 1 FROM memories WHERE forget_requested = 0 LIMIT 1").fetchone()
+        if has_memory and conn.execute("SELECT 1 FROM memories_fts LIMIT 1").fetchone() is None:
+            needs_backfill_probe = True
+    if needs_backfill_probe:
+        existing = conn.execute("SELECT COUNT(*) AS c FROM memories_fts").fetchone()
+        memory_count = conn.execute("SELECT COUNT(*) AS c FROM memories WHERE forget_requested = 0").fetchone()
+        if existing and memory_count and int(existing["c"]) == 0 and int(memory_count["c"]) > 0:
+            for row in conn.execute("SELECT id, content FROM memories WHERE forget_requested = 0"):
+                _fts_upsert(conn, str(row["id"]), str(row["content"]))
 
 
 def _fts_upsert(conn: sqlite3.Connection, memory_id: str, content: str) -> None:
@@ -269,8 +286,16 @@ def update_memory_tiers(
     return len(updates)
 
 
-def bump_recall_stats(conn: sqlite3.Connection, memory_id: str, layer: str, *, commit: bool = True) -> None:
-    row = get_memory(conn, memory_id)
+def bump_recall_stats(
+    conn: sqlite3.Connection,
+    memory_id: str,
+    layer: str,
+    *,
+    row: MemoryRow | None = None,
+    commit: bool = True,
+) -> None:
+    if row is None:
+        row = get_memory(conn, memory_id)
     if row is None:
         return
     importance_delta = {"explicit": 0.03, "implicit": 0.02, "reflection": 0.01}.get(layer, 0.01)

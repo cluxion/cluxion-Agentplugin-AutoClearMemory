@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -83,7 +83,13 @@ def record_retrieval(
         last_recall_at=db.now_iso(),
         commit=False,
     )
-    db.bump_recall_stats(conn, memory_id, layer, commit=False)
+    db.bump_recall_stats(
+        conn,
+        memory_id,
+        layer,
+        row=replace(row, tier=str(decision["tier"]), retrieval_count=retrieval_count),
+        commit=False,
+    )
     if commit:
         conn.commit()
     return RecallResult(

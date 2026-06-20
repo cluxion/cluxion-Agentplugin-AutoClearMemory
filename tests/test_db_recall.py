@@ -44,3 +44,32 @@ def test_busy_timeout_is_set(tmp_path: Path, monkeypatch):
     timeout = conn.execute("PRAGMA busy_timeout").fetchone()[0]
     assert timeout == 5000
     conn.close()
+
+
+def test_connect_skips_schema_on_repeat_same_process(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("FORGETFORGE_HOME", str(tmp_path))
+    db_path = tmp_path / "db.sqlite"
+    conn1 = db.connect(db_path)
+    db.upsert_memory(conn1, memory_id="x", content="repeat connect")
+    conn1.close()
+
+    statements: list[str] = []
+    conn2 = db.connect(db_path)
+    conn2.set_trace_callback(statements.append)
+    row = db.get_memory(conn2, "x")
+    conn2.set_trace_callback(None)
+    assert row is not None
+    assert not any("CREATE" in stmt.upper() for stmt in statements)
+    conn2.close()
+
+
+def test_connect_initializes_distinct_paths(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("FORGETFORGE_HOME", str(tmp_path))
+    conn_a = db.connect(tmp_path / "a.sqlite")
+    conn_b = db.connect(tmp_path / "b.sqlite")
+    db.upsert_memory(conn_a, memory_id="a", content="db a")
+    db.upsert_memory(conn_b, memory_id="b", content="db b")
+    assert db.get_memory(conn_a, "a") is not None
+    assert db.get_memory(conn_b, "b") is not None
+    conn_a.close()
+    conn_b.close()
