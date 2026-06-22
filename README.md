@@ -52,6 +52,16 @@ forgetforge doctor --json   # 구조화 출력
 
 Hermes 안에서는 `forgetforge_doctor` 도구로도 노출됩니다.
 
+## Hermes 슬래시 커맨드 (0.3.13+)
+
+```
+/forgetforge-recall redis port
+/forgetforge-status
+/forgetforge-doctor
+```
+
+`/` 입력 시 🔌로 표시 · recall/status는 도구 `forgetforge_recall` / `forgetforge_status`와 동일.
+
 ## 라이선스
 
 Apache-2.0
@@ -109,6 +119,16 @@ forgetforge doctor --json   # structured output
 ```
 
 Also exposed inside Hermes as the `forgetforge_doctor` tool.
+
+## Hermes slash commands (0.3.13+)
+
+```
+/forgetforge-recall redis port
+/forgetforge-status
+/forgetforge-doctor
+```
+
+Shows in `/` autocomplete with 🔌 · recall/status match tools `forgetforge_recall` / `forgetforge_status`.
 
 ## License
 

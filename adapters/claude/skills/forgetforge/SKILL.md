@@ -34,6 +34,7 @@ forgetforge check
 3. recall 결과를 읽고 **당신의 응답 맥락에 반영**할 것. 플러그인이 응답을 대신 작성하지 않음.
 4. 모르는 사실을 기억에서 찾지 못하면 추측하지 말 것.
 5. Hermes에서는 hot tier가 `pre_llm_call` hook으로 자동 inject됩니다. 수동이 필요하면 `forgetforge_hot_context`를 호출하세요.
+6. Hermes 슬래시 (0.3.13+): `/forgetforge-recall <query>`, `/forgetforge-status`, `/forgetforge-doctor` — `/` 🔌 자동완성.
 
 ## Retention (참고)
 
