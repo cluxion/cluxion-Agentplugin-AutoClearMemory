@@ -155,7 +155,6 @@ def handler_exception_coverage(ctx: DoctorContext) -> tuple[str, str]:
     try:
         import json
 
-        from forgetforge.adapters.hermes import register as hermes_register
 
         class _TestCtx:
             def __init__(self):
@@ -166,13 +165,16 @@ def handler_exception_coverage(ctx: DoctorContext) -> tuple[str, str]:
 
             register_hook = None
 
-        tctx = _TestCtx()
-        hermes_register(tctx)
-        store_handler = tctx.tools.get("forgetforge_store")
-        if not store_handler:
-            return "fail", "store handler not registered"
-        # real test: bad type arg triggers exception path -> {ok: false}
-        raw = store_handler({"memory_id": "bad", "content": "x", "importance": [1, 2]})
+        from forgetforge.adapters.hermes import _wrap
+
+        # The contract under test is the _wrap boundary: any handler exception
+        # must surface as {ok: false} JSON. A doctor probe must never touch the
+        # user's real memory store, so a raising stub stands in for the handler
+        # (store input validation itself is covered by memory_id_validation).
+        def _raising_handler(args: dict[str, object]) -> dict[str, object]:
+            raise TypeError("doctor-probe simulated failure")
+
+        raw = _wrap(_raising_handler)({})
         payload = json.loads(raw)
         if payload.get("ok") is False:
             return "pass", "exception coverage verified (TypeError -> ok:false)"
