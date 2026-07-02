@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -136,10 +137,19 @@ def register(ctx: object) -> None:
         )
 
 
+_hot_inject_reported: set[str] = set()
+
+
 def _pre_llm_hot_inject(**_: object) -> dict[str, str]:
+    # Fail-safe by design: hot-context enrichment must never break the LLM call,
+    # but failures must be visible (once per error type) or memory dies silently.
     try:
         return hot_inject.hot_context_payload()
-    except Exception:
+    except Exception as exc:
+        kind = type(exc).__name__
+        if kind not in _hot_inject_reported:
+            _hot_inject_reported.add(kind)
+            print(f"forgetforge hot-inject degraded ({kind}): {exc}", file=sys.stderr)
         return {}
 
 

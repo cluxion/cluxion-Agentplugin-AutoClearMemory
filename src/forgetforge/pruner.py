@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -67,17 +68,26 @@ def run_pruner(conn, config: ForgetForgeConfig | None = None) -> dict[str, Any]:
 
 
 def run_pruner_daemon(*, interval_hours: int | None = None, run_once: bool = False, max_cycles: int = 24) -> None:
-    """Run pruner on an interval with a hard cycle cap."""
+    """Run pruner on an interval with a hard cycle cap, one JSON summary per cycle."""
+    if max_cycles < 1:
+        raise ValueError(f"max_cycles must be >= 1, got {max_cycles}")
+    if interval_hours is not None and interval_hours < 1:
+        raise ValueError(f"interval_hours must be >= 1, got {interval_hours}")
     cfg = load_config()
     hours = interval_hours or cfg.pruner_interval_hours
     seconds = max(60, int(hours * 3600))
     cycles = 1 if run_once else max(1, max_cycles)
     for index in range(cycles):
+        started = time.monotonic()
         conn = db.connect(cfg.db_path)
         try:
-            run_pruner(conn, config=cfg)
+            summary = run_pruner(conn, config=cfg)
         finally:
             conn.close()
+        summary["cycle"] = index + 1
+        summary["cycles_max"] = cycles
+        summary["duration_ms"] = int((time.monotonic() - started) * 1000)
+        print(json.dumps(summary, ensure_ascii=False), flush=True)
         if run_once:
             return
         if index == cycles - 1:
