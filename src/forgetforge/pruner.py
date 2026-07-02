@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import fcntl
 import json
+import os
 import time
 from typing import Any
 
@@ -74,6 +76,32 @@ def run_pruner_daemon(*, interval_hours: int | None = None, run_once: bool = Fal
     if interval_hours is not None and interval_hours < 1:
         raise ValueError(f"interval_hours must be >= 1, got {interval_hours}")
     cfg = load_config()
+    # Two concurrent pruners race on the archive files (JSONL/Parquet appends),
+    # so the daemon holds an exclusive home-dir lock for its lifetime.
+    lock_path = cfg.home / ".pruner.lock"
+    lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(lock_fd)
+        print(
+            json.dumps(
+                {"ok": False, "error": "pruner_already_running", "message": f"another pruner holds {lock_path}"},
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+        return
+    try:
+        _run_pruner_cycles(cfg, interval_hours=interval_hours, run_once=run_once, max_cycles=max_cycles)
+    finally:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(lock_fd)
+
+
+def _run_pruner_cycles(cfg: ForgetForgeConfig, *, interval_hours: int | None, run_once: bool, max_cycles: int) -> None:
     hours = interval_hours or cfg.pruner_interval_hours
     seconds = max(60, int(hours * 3600))
     cycles = 1 if run_once else max(1, max_cycles)
