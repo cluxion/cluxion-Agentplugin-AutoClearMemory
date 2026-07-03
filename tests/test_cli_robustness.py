@@ -8,11 +8,9 @@ from forgetforge import cli, pruner
 
 
 def test_init_rejects_unknown_agents() -> None:
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(ValueError) as exc:
         cli._parse_agents("nonsense")
-    payload = json.loads(str(exc.value))
-    assert payload["ok"] is False
-    assert payload["error"] == "unknown_agents"
+    assert str(exc.value) == "unknown agent(s): nonsense"
 
 
 def test_pruner_daemon_rejects_zero_max_cycles() -> None:

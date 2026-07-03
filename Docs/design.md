@@ -40,6 +40,8 @@ R = e^{-t / S} \times \left(1 + 0.45 \cdot N_r + 0.30 \cdot I + 0.25 \cdot F \ri
 
 ```bash
 forgetforge import-brief --source supercoder --brief "<json or text>"
+forgetforge import-brief --source supercoder --brief-file ./brief.txt
+printf '%s\n' "<json or text>" | forgetforge import-brief --source supercoder --brief -
 ```
 
 Hermes: `forgetforge_import_brief`

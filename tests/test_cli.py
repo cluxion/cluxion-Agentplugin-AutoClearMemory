@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sys
+from io import StringIO
 from typing import TYPE_CHECKING
 
 import pytest
@@ -52,6 +54,16 @@ def test_init_all_includes_every_known_agent(capsys: pytest.CaptureFixture[str])
     assert sorted(payload["agents"]) == ["hermes"]
 
 
+def test_init_rejects_unknown_agents_as_stdout_json(capsys: pytest.CaptureFixture[str]) -> None:
+    code = cli.main(["init", "--agents", "nonsense"])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert code == 2
+    assert captured.err == ""
+    assert payload["ok"] is False
+    assert payload["error"] == "unknown_agents"
+
+
 def test_init_never_overwrites_existing_config(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     (tmp_path / "config.yaml").write_text("pruner:\n  interval_hours: 1\n", encoding="utf-8")
     code, payload = _run(capsys, "init", "--agents", "hermes")
@@ -67,6 +79,37 @@ def test_store_then_recall_roundtrip(capsys: pytest.CaptureFixture[str]) -> None
     assert code == 0
     assert recalled["count"] == 1
     assert recalled["results"][0]["memory_id"] == "m-1"
+
+
+def test_store_rejects_empty_memory_id_as_stdout_json(capsys: pytest.CaptureFixture[str]) -> None:
+    code = cli.main(["store", "", "--content", "postgres port is 5433"])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert code == 2
+    assert captured.err == ""
+    assert payload == {
+        "ok": False,
+        "error": "invalid_argument",
+        "message": "memory_id is required",
+        "hint": "check required CLI arguments",
+    }
+
+
+def test_store_reads_content_from_file_and_stdin(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    content_file = tmp_path / "content.txt"
+    content_file.write_text("file backed memory content", encoding="utf-8")
+    code, payload = _run(capsys, "store", "m-file", "--content-file", str(content_file))
+    assert code == 0 and payload["ok"] is True
+
+    monkeypatch.setattr(sys, "stdin", StringIO("stdin backed memory content"))
+    code, payload = _run(capsys, "store", "m-stdin", "--content", "-")
+    assert code == 0 and payload["ok"] is True
+
+    code, recalled = _run(capsys, "recall", "backed")
+    assert code == 0
+    assert {row["memory_id"] for row in recalled["results"]} == {"m-file", "m-stdin"}
 
 
 def test_recall_miss_returns_actionable_hint(capsys: pytest.CaptureFixture[str]) -> None:
@@ -116,12 +159,73 @@ def test_hot_context_empty_db(capsys: pytest.CaptureFixture[str]) -> None:
     assert payload["context"] == ""
 
 
+def test_json_mode_parse_errors_use_stdout_json(capsys: pytest.CaptureFixture[str]) -> None:
+    code = cli.main(["doctor", "--json", "--unknown"])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert code == 2
+    assert captured.err == ""
+    assert payload["ok"] is False
+    assert payload["error"] == "usage_error"
+
+
+def test_json_mode_domain_errors_use_stdout_json(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_doctor(**kwargs):
+        raise RuntimeError("probe exploded")
+
+    monkeypatch.setattr(cli, "run_doctor", fail_doctor)
+    code = cli.main(["doctor", "--json"])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert code == 1
+    assert captured.err == ""
+    assert payload == {
+        "ok": False,
+        "error": "doctor_failed",
+        "message": "probe exploded",
+        "hint": "run forgetforge doctor without --json for details",
+    }
+
+
 def test_import_brief_stores_prefixed_memory(capsys: pytest.CaptureFixture[str]) -> None:
     code, payload = _run(capsys, "import-brief", "--source", "supercoder", "--brief", "deploy uses blue-green")
     assert code == 0 and payload["ok"] is True
     code, recalled = _run(capsys, "recall", "blue-green")
     assert code == 0 and recalled["count"] == 1
     assert recalled["results"][0]["content"].startswith("[supercoder brief]")
+
+
+def test_import_brief_rejects_empty_brief_as_stdout_json(capsys: pytest.CaptureFixture[str]) -> None:
+    code = cli.main(["import-brief", "--source", "manual", "--brief", ""])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert code == 2
+    assert captured.err == ""
+    assert payload == {
+        "ok": False,
+        "error": "invalid_argument",
+        "message": "brief is required",
+        "hint": "check required CLI arguments",
+    }
+
+
+def test_import_brief_reads_brief_from_file_and_stdin(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    brief_file = tmp_path / "brief.txt"
+    brief_file.write_text("file brief says archive old memories", encoding="utf-8")
+    code, payload = _run(capsys, "import-brief", "--source", "manual", "--brief-file", str(brief_file))
+    assert code == 0 and payload["ok"] is True
+
+    monkeypatch.setattr(sys, "stdin", StringIO("stdin brief says pin release notes"))
+    code, payload = _run(capsys, "import-brief", "--source", "manual", "--brief", "-")
+    assert code == 0 and payload["ok"] is True
+
+    code, recalled = _run(capsys, "recall", "brief")
+    assert code == 0
+    assert recalled["count"] == 2
 
 
 def test_status_reports_stats_and_backend(capsys: pytest.CaptureFixture[str]) -> None:

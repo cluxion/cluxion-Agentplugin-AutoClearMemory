@@ -19,9 +19,22 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
+class _JsonArgparseError(Exception):
+    pass
+
+
+class _JsonArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        raise _JsonArgparseError(message)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = _parser()
-    args = parser.parse_args(argv)
+    raw_argv = list(argv) if argv is not None else sys.argv[1:]
+    parser = _parser(json_errors=_json_requested(raw_argv))
+    try:
+        args = parser.parse_args(raw_argv)
+    except _JsonArgparseError as e:
+        return _usage_error(str(e), error="usage_error", hint="check command syntax")
     if args.command == "check":
         return _check()
     if args.command == "init":
@@ -54,10 +67,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 2
 
 
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="forgetforge")
+def _json_requested(argv: Sequence[str]) -> bool:
+    return any(arg in {"--json", "--json-stdin"} for arg in argv)
+
+
+def _parser(*, json_errors: bool = False) -> argparse.ArgumentParser:
+    parser_class = _JsonArgumentParser if json_errors else argparse.ArgumentParser
+    parser = parser_class(prog="forgetforge")
     parser.add_argument("--version", action="version", version=f"forgetforge {__version__}")
-    sub = parser.add_subparsers(dest="command")
+    sub = parser.add_subparsers(dest="command", parser_class=parser_class)
     sub.add_parser("check", help="Check Rust engine and database paths")
     init = sub.add_parser("init", help="Initialize ~/.forgetforge and optional agent adapters")
     init.add_argument("--agents", default="all", help="Comma-separated: hermes,claude,codex or all")
@@ -76,7 +94,8 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("prune", help="Run background pruner once")
     store_cmd = sub.add_parser("store", help="Store or update a memory")
     store_cmd.add_argument("memory_id")
-    store_cmd.add_argument("--content", required=True)
+    store_cmd.add_argument("--content", default=None, help="Content text, or '-' to read stdin")
+    store_cmd.add_argument("--content-file", default=None, help="Read content from a UTF-8 file, or '-' for stdin")
     store_cmd.add_argument("--importance", type=float, default=0.5)
     store_cmd.add_argument("--frequency", type=float, default=0.0)
     store_cmd.add_argument("--procedural", action="store_true")
@@ -86,7 +105,8 @@ def _parser() -> argparse.ArgumentParser:
     daemon.add_argument("--max-cycles", type=int, default=24, help="Maximum cycles before exiting")
     brief = sub.add_parser("import-brief", help="Import preprocessing/supercoder brief into memory")
     brief.add_argument("--source", choices=["preprocessing", "supercoder", "manual"], required=True)
-    brief.add_argument("--brief", required=True)
+    brief.add_argument("--brief", default=None, help="Brief text, or '-' to read stdin")
+    brief.add_argument("--brief-file", default=None, help="Read brief from a UTF-8 file, or '-' for stdin")
     brief.add_argument("--memory-id", default=None)
     brief.add_argument("--importance", type=float, default=0.65)
     hot = sub.add_parser("hot-context", help="Print hot-tier context block")
@@ -110,13 +130,40 @@ def _check() -> int:
     return 0
 
 
+def _usage_error(message: str, *, error: str = "invalid_argument", hint: str = "check required CLI arguments") -> int:
+    print(json.dumps({"ok": False, "error": error, "message": message, "hint": hint}, ensure_ascii=False))
+    return 2
+
+
+def _read_text_argument(name: str, value: str | None, file_path: str | None) -> str:
+    option = f"--{name}"
+    file_option = f"--{name}-file"
+    if value is not None and file_path is not None:
+        raise ValueError(f"use only one of {option} or {file_option}")
+    if value is None and file_path is None:
+        raise ValueError(f"{name} is required")
+    if value == "-" or file_path == "-":
+        return sys.stdin.read()
+    if file_path is not None:
+        return Path(file_path).read_text(encoding="utf-8")
+    return str(value)
+
+
 def _init(args: argparse.Namespace) -> int:
+    try:
+        agents = _parse_agents(str(args.agents))
+    except ValueError as e:
+        valid = ", ".join(sorted(init_assets.known_agents()))
+        return _usage_error(
+            str(e),
+            error="unknown_agents",
+            hint=f"valid values: all, {valid}. codex/claude install via their plugin marketplaces, not init.",
+        )
     cfg = load_config()
     cfg.home.mkdir(parents=True, exist_ok=True)
     cfg.archive_dir.mkdir(parents=True, exist_ok=True)
     with closing(db.connect(cfg.db_path)):
         pass  # create schema up front so later commands never race on DDL
-    agents = _parse_agents(str(args.agents))
     installed = init_assets.install_adapter_assets(agents, cfg.home)
     target = cfg.home / "config.yaml"
     config_created = init_assets.install_example_config(target)
@@ -174,18 +221,21 @@ def _recall(args: argparse.Namespace) -> int:
 
 def _store(args: argparse.Namespace) -> int:
     try:
+        content = _read_text_argument("content", args.content, args.content_file)
         cfg = load_config()
         with closing(db.connect(cfg.db_path)) as conn:
             stored = store.store_memory(
                 conn,
                 memory_id=str(args.memory_id),
-                content=str(args.content),
+                content=content,
                 importance=float(args.importance),
                 frequency=float(args.frequency),
                 is_procedural=bool(args.procedural),
             )
         print(json.dumps({"ok": True, "stored": stored}, ensure_ascii=False, indent=2))
         return 0
+    except ValueError as e:
+        return _usage_error(str(e))
     except (sqlite3.Error, OSError, FileExistsError) as e:
         print(json.dumps({'ok': False, 'error': str(e), 'error_type': type(e).__name__}, ensure_ascii=False))
         return 1
@@ -193,12 +243,11 @@ def _store(args: argparse.Namespace) -> int:
 
 def _pruner_daemon(args: argparse.Namespace) -> int:
     try:
-        pruner.run_pruner_daemon(
+        return pruner.run_pruner_daemon(
             interval_hours=args.interval_hours,
             run_once=bool(args.once),
             max_cycles=int(args.max_cycles),
         )
-        return 0
     except ValueError as e:
         print(
             json.dumps(
@@ -210,17 +259,24 @@ def _pruner_daemon(args: argparse.Namespace) -> int:
 
 
 def _import_brief(args: argparse.Namespace) -> int:
-    cfg = load_config()
-    with closing(db.connect(cfg.db_path)) as conn:
-        result = import_brief.import_brief(
-            conn,
-            source=str(args.source),
-            brief=str(args.brief),
-            memory_id=str(args.memory_id) if args.memory_id else None,
-            importance=float(args.importance),
-        )
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    try:
+        brief_text = _read_text_argument("brief", args.brief, args.brief_file)
+        cfg = load_config()
+        with closing(db.connect(cfg.db_path)) as conn:
+            result = import_brief.import_brief(
+                conn,
+                source=str(args.source),
+                brief=brief_text,
+                memory_id=str(args.memory_id) if args.memory_id else None,
+                importance=float(args.importance),
+            )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    except ValueError as e:
+        return _usage_error(str(e))
+    except (sqlite3.Error, OSError, FileExistsError) as e:
+        print(json.dumps({'ok': False, 'error': str(e), 'error_type': type(e).__name__}, ensure_ascii=False))
+        return 1
 
 
 def _hot_context(args: argparse.Namespace) -> int:
@@ -302,24 +358,40 @@ def _prune() -> int:
 
 def _doctor(args: argparse.Namespace) -> int:
     try:
-        pkg = "forgetforge.doctor"
-        cat_path = Path(str(importlib.resources.files(pkg).joinpath("catalog.json")))
-    except Exception:
-        cat_path = Path(__file__).parent.parent / "doctor" / "catalog.json"
-    result = run_doctor(
-        cwd=Path.cwd(),
-        catalog_path=cat_path,
-        probes=PROBES,
-        plugin="autoclearmemory",
-        version=__version__,
-    )
-    if getattr(args, "json", False):
-        print(render_json(result))
-    else:
-        cat_entries = load_catalog(cat_path)
-        text = render_text(result, cat_entries, verbose=getattr(args, "verbose", False))
-        print(text)
-    return 0 if result.ok else 1
+        try:
+            pkg = "forgetforge.doctor"
+            cat_path = Path(str(importlib.resources.files(pkg).joinpath("catalog.json")))
+        except Exception:
+            cat_path = Path(__file__).parent.parent / "doctor" / "catalog.json"
+        result = run_doctor(
+            cwd=Path.cwd(),
+            catalog_path=cat_path,
+            probes=PROBES,
+            plugin="autoclearmemory",
+            version=__version__,
+        )
+        if getattr(args, "json", False):
+            print(render_json(result))
+        else:
+            cat_entries = load_catalog(cat_path)
+            text = render_text(result, cat_entries, verbose=getattr(args, "verbose", False))
+            print(text)
+        return 0 if result.ok else 1
+    except Exception as e:
+        if getattr(args, "json", False):
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": "doctor_failed",
+                        "message": str(e),
+                        "hint": "run forgetforge doctor without --json for details",
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            return 1
+        raise
 
 
 def _parse_agents(raw: str) -> list[str]:
@@ -329,19 +401,8 @@ def _parse_agents(raw: str) -> list[str]:
     known = set(init_assets.known_agents())
     unknown = sorted(set(agents) - known)
     if not agents or unknown:
-        valid = ", ".join(sorted(known))
         bad = ", ".join(unknown) if unknown else "(empty)"
-        raise SystemExit(
-            json.dumps(
-                {
-                    "ok": False,
-                    "error": "unknown_agents",
-                    "message": f"unknown agent(s): {bad}",
-                    "hint": f"valid values: all, {valid}. codex/claude install via their plugin marketplaces, not init.",
-                },
-                ensure_ascii=False,
-            )
-        )
+        raise ValueError(f"unknown agent(s): {bad}")
     return agents
 
 

@@ -69,7 +69,7 @@ def run_pruner(conn, config: ForgetForgeConfig | None = None) -> dict[str, Any]:
     }
 
 
-def run_pruner_daemon(*, interval_hours: int | None = None, run_once: bool = False, max_cycles: int = 24) -> None:
+def run_pruner_daemon(*, interval_hours: int | None = None, run_once: bool = False, max_cycles: int = 24) -> int:
     """Run pruner on an interval with a hard cycle cap, one JSON summary per cycle."""
     if max_cycles < 1:
         raise ValueError(f"max_cycles must be >= 1, got {max_cycles}")
@@ -79,6 +79,7 @@ def run_pruner_daemon(*, interval_hours: int | None = None, run_once: bool = Fal
     # Two concurrent pruners race on the archive files (JSONL/Parquet appends),
     # so the daemon holds an exclusive home-dir lock for its lifetime.
     lock_path = cfg.home / ".pruner.lock"
+    cfg.home.mkdir(parents=True, exist_ok=True)
     lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -91,9 +92,10 @@ def run_pruner_daemon(*, interval_hours: int | None = None, run_once: bool = Fal
             ),
             flush=True,
         )
-        return
+        return 1
     try:
         _run_pruner_cycles(cfg, interval_hours=interval_hours, run_once=run_once, max_cycles=max_cycles)
+        return 0
     finally:
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
@@ -112,6 +114,7 @@ def _run_pruner_cycles(cfg: ForgetForgeConfig, *, interval_hours: int | None, ru
             summary = run_pruner(conn, config=cfg)
         finally:
             conn.close()
+        summary["interval_hours"] = hours
         summary["cycle"] = index + 1
         summary["cycles_max"] = cycles
         summary["duration_ms"] = int((time.monotonic() - started) * 1000)

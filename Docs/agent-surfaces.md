@@ -43,8 +43,8 @@ Codex와 Claude Code는 같은 루트 플러그인 artifact를 설치하고, **c
 | `forgetforge keep <id>` | `#keep_forever` |
 | `forgetforge forget <id>` | `#forget_this` |
 | `forgetforge status` | Memory health |
-| `forgetforge store <id> --content "..."` | Store/update memory |
-| `forgetforge import-brief` | Brief handoff |
+| `forgetforge store <id> --content "..."` / `--content-file <path>` / `--content -` | Store/update memory |
+| `forgetforge import-brief --brief "..."` / `--brief-file <path>` / `--brief -` | Brief handoff |
 | `forgetforge hot-context` | Hot tier block |
 | `forgetforge prune` | Pruner 1회 |
 | `forgetforge pruner-daemon --max-cycles 24` | Bounded background pruner |

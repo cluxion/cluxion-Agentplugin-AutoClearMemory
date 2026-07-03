@@ -38,7 +38,7 @@ def test_fresh_high_importance_memory_reports_born_hot_contract(tmp_path: Path, 
     stored = store.store_memory(
         conn,
         memory_id="launch",
-        content="Release 0.3.15 must stay visible immediately after storing.",
+        content="Release 0.3.16 must stay visible immediately after storing.",
         importance=0.95,
     )
     assert stored["tier"] == "hot"

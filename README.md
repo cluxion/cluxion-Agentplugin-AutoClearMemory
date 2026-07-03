@@ -31,9 +31,13 @@ plugins:
 
 ```bash
 forgetforge store redis-port --content "Redis runs on port 6380" --importance 0.8
+forgetforge store large-note --content-file ./memory.txt
+printf '%s\n' "stdin memory" | forgetforge store stdin-note --content -
 forgetforge recall redis        # 기억을 꺼내고(회상) 강화합니다
 forgetforge keep redis-port     # 절대 흐려지지 않도록 기억을 고정합니다
 forgetforge forget redis-port   # 기억이 흐려지도록 둡니다
+forgetforge import-brief --source manual --brief-file ./brief.txt
+printf '%s\n' "handoff brief" | forgetforge import-brief --source manual --brief -
 forgetforge status              # 무엇이 기억되어 있는지 확인합니다
 ```
 
@@ -54,7 +58,7 @@ forgetforge doctor --json   # 구조화 출력
 
 Hermes 안에서는 `forgetforge_doctor` 도구로도 노출됩니다.
 
-## 슬래시 커맨드 (0.3.15+)
+## 슬래시 커맨드
 
 ```
 /forgetforge-recall redis port
@@ -101,9 +105,13 @@ Your agent calls these automatically, or you can use the CLI directly:
 
 ```bash
 forgetforge store redis-port --content "Redis runs on port 6380" --importance 0.8
+forgetforge store large-note --content-file ./memory.txt
+printf '%s\n' "stdin memory" | forgetforge store stdin-note --content -
 forgetforge recall redis        # retrieve a memory (and reinforce it)
 forgetforge keep redis-port     # pin a memory so it never fades
 forgetforge forget redis-port   # let a memory fade away
+forgetforge import-brief --source manual --brief-file ./brief.txt
+printf '%s\n' "handoff brief" | forgetforge import-brief --source manual --brief -
 forgetforge status              # see what's remembered
 ```
 
@@ -125,7 +133,7 @@ forgetforge doctor --json   # structured output
 
 Also exposed inside Hermes as the `forgetforge_doctor` tool.
 
-## Slash commands (0.3.15+)
+## Slash commands
 
 ```
 /forgetforge-recall redis port

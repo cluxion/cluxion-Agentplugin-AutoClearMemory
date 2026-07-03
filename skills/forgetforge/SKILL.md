@@ -17,12 +17,12 @@ forgetforge check
 
 | Situation | Command |
 | --- | --- |
-| New fact or decision to store | `forgetforge store <id> --content "<fact>"` |
+| New fact or decision to store | `forgetforge store <id> --content "<fact>"` (`--content-file <path>` or `--content -` for large input) |
 | Session start or large context | `forgetforge status` |
 | Prior fact needed | `forgetforge recall <topic>` |
 | User says `#keep_forever` | `forgetforge keep <id>` |
 | User says `#forget_this` | `forgetforge forget <id>` |
-| Preprocessing or handoff brief received | `forgetforge import-brief --source manual --brief "<brief>"` |
+| Preprocessing or handoff brief received | `forgetforge import-brief --source manual --brief "<brief>"` (`--brief-file <path>` or `--brief -` for large input) |
 | Diagnostics needed | `forgetforge doctor --json` |
 
 Rules:
