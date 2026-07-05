@@ -16,6 +16,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from forgetforge import db
+
 # --- performance bounds (the guarantees; do not raise without re-benchmarking) ---
 HOPS = 2
 FANOUT = 6
@@ -72,7 +74,7 @@ def ingest(conn, nodes: list[dict], edges: list[dict]) -> dict[str, int]:
     ensure_graph_schema(conn)
     if len(nodes) > INGEST_NODE_CAP:
         nodes = nodes[:INGEST_NODE_CAP]
-    now = _iso()
+    now = db.now_iso()  # same format as regular memories share this column
     n_nodes = n_edges = skipped = 0
     for nd in nodes:
         nid = str(nd.get("id") or "").strip()
@@ -117,10 +119,6 @@ def ingest(conn, nodes: list[dict], edges: list[dict]) -> dict[str, int]:
         n_edges += 1
     conn.commit()
     return {"nodes": n_nodes, "edges": n_edges, "skipped": skipped}
-
-
-def _iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 def _seed_ids(conn, anchor_tags: str, session: str | None, mistakes: bool) -> list[str]:
