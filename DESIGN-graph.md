@@ -25,7 +25,7 @@ Nodes = existing `memories` rows, typed. Edges = new `graph_edges` table.
 |---|---|---|
 | ① session memory + selective recall | episodic | `session`→`task`→`file` edges; `graph-recall --session <id>` |
 | ② Graph-RAG context savings + TTL cascade | semantic routing | bounded 2-hop BFS from FTS5-anchored seeds; leader delete → `expire_at` cascade |
-| ③ mistake ontology, no-repeat | failure ontology | `mistake` nodes (evolved from intent-patterns rows); `supersedes` edges via contradiction.py; `graph-recall --mistakes --domain <tags>` |
+| ③ mistake ontology, no-repeat | failure ontology | `mistake` nodes (evolved from intent-patterns rows); `supersedes` edges via contradiction.py; `graph-recall --mistakes --anchor <tags>` |
 
 ## Schema (additive migration — never rewrites existing rows)
 
@@ -37,8 +37,8 @@ ALTER TABLE memories ADD COLUMN domain_tags TEXT;      -- space-joined tags for 
 ALTER TABLE memories ADD COLUMN expire_at   INTEGER;   -- unix ts; NULL = no TTL
 
 CREATE TABLE IF NOT EXISTS graph_edges (
-  src_id  INTEGER NOT NULL,
-  dst_id  INTEGER NOT NULL,
+  src_id  TEXT NOT NULL,   -- memories.id is TEXT
+  dst_id  TEXT NOT NULL,
   rel     TEXT NOT NULL,           -- touched|decided|failed_on|relates_to|supersedes|owns
   weight  REAL NOT NULL DEFAULT 1.0,
   PRIMARY KEY (src_id, dst_id, rel)
@@ -83,7 +83,7 @@ an old one) instead of duplicating — keeps the ontology self-cleaning.
 ## CLI (additive subcommands)
 
 - `forgetforge graph-ingest`   — stdin JSON {nodes, edges}; cold; prints counts.
-- `forgetforge graph-recall`   — `--anchor "<tags>" [--session ID] [--mistakes] [--domain ...]`; hot; prints ≤8.
+- `forgetforge graph-recall`   — `--anchor "<tags>" [--session ID] [--mistakes] [--limit N]`; hot; prints ≤8.
 - `forgetforge graph-expire-session <id>` — ② TTL cascade; marks owned nodes expire_at=now+1d.
 
 pruner: one added branch deletes rows where `expire_at IS NOT NULL AND expire_at < now`
