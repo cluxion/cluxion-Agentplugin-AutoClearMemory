@@ -128,8 +128,14 @@ def test_mistake_recall_routes_by_domain_tags(tmp_path):
     conn = _fresh(tmp_path)
     graph.ingest(
         conn,
-        [{"id": "m1", "content": "do not raise HOPS without benchmark",
-          "node_type": "mistake", "domain_tags": "graph perf"}],
+        [
+            {
+                "id": "m1",
+                "content": "do not raise HOPS without benchmark",
+                "node_type": "mistake",
+                "domain_tags": "graph perf",
+            }
+        ],
         [],
     )
     out = graph.graph_recall(conn, anchor_tags="graph", mistakes=True)
@@ -149,8 +155,10 @@ def test_graph_nodes_do_not_pollute_normal_recall(tmp_path):
     db.upsert_memory(conn, memory_id="real", content="user prefers dark mode")
     graph.ingest(
         conn,
-        [{"id": "s1:t", "content": "build graph layer", "node_type": "task", "session_id": "s1"},
-         {"id": "s1:f", "content": "graph.py file", "node_type": "file"}],
+        [
+            {"id": "s1:t", "content": "build graph layer", "node_type": "task", "session_id": "s1"},
+            {"id": "s1:f", "content": "graph.py file", "node_type": "file"},
+        ],
         [],
     )
     hits = {m.id for m in db.search_memories(conn, "graph")}
@@ -187,26 +195,27 @@ def test_over_cap_ingest_reports_dropped_not_silent(tmp_path):
 
 
 def test_schema_race_duplicate_column_tolerated(tmp_path):
-    # two first-time writers race ensure_graph_schema: both check-then-ALTER on a fresh DB
+    # two first-time writers race ensure_graph_schema: writer B reads a missing-column
+    # PRAGMA snapshot, writer A lands every column before B's first ALTER runs, so B's
+    # real ALTERs all fail with 'duplicate column name' inside graph.ensure_graph_schema
     # (real trigger: concurrent SessionEnd hooks each running `forgetforge store`)
-    conn = db.connect(tmp_path / "race.db")
-    stale = conn.execute("PRAGMA table_info(memories)").fetchall()  # pre-migration snapshot
-    graph.ensure_graph_schema(conn)  # writer A lands the columns first
+    path = tmp_path / "race.db"
 
-    class _StaleCheckConn:
-        # writer B: its missing-column check ran before A's ALTERs committed
+    class _RacedConn(sqlite3.Connection):
+        raced = False
+
         def execute(self, sql, *args):
-            if sql.startswith("PRAGMA table_info"):
-                class _Cur:
-                    def fetchall(self):
-                        return stale
+            if isinstance(sql, str) and sql.startswith("ALTER TABLE memories") and not _RacedConn.raced:
+                _RacedConn.raced = True
+                rival = sqlite3.connect(path)  # writer A migrates fully first
+                graph.ensure_graph_schema(rival)
+                rival.close()
+            return super().execute(sql, *args)
 
-                return _Cur()
-            return conn.execute(sql, *args)
-
-        def commit(self):
-            conn.commit()
-
-    graph.ensure_graph_schema(_StaleCheckConn())  # must swallow 'duplicate column name'
+    conn = sqlite3.connect(path, factory=_RacedConn)
+    conn.executescript(db.SCHEMA)  # base schema only — graph columns still missing
+    graph.ensure_graph_schema(conn)  # must swallow the real 'duplicate column name'
+    assert _RacedConn.raced  # the race actually fired; a vacuous pass is a test bug
     cols = {r[1] for r in conn.execute("PRAGMA table_info(memories)").fetchall()}
     assert {"node_type", "session_id", "domain_tags", "expire_at"} <= cols
+    conn.close()

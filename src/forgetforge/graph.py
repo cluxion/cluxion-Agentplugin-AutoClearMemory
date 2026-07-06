@@ -13,6 +13,7 @@ All bounds are module constants asserted by tests and the `graph_bounds_enforced
 
 from __future__ import annotations
 
+import sqlite3
 import time
 from typing import Any
 
@@ -87,6 +88,9 @@ def ingest(conn, nodes: list[dict], edges: list[dict]) -> dict[str, int]:
     now = db.now_iso()  # same format as regular memories share this column
     n_nodes = n_edges = 0
     for nd in nodes:
+        if not isinstance(nd, dict):
+            skipped += 1
+            continue
         nid = str(nd.get("id") or "").strip()
         if not nid:
             skipped += 1
@@ -117,6 +121,9 @@ def ingest(conn, nodes: list[dict], edges: list[dict]) -> dict[str, int]:
         )
         n_nodes += 1
     for ed in edges:
+        if not isinstance(ed, dict):
+            skipped += 1
+            continue
         src, dst, rel = str(ed.get("src", "")), str(ed.get("dst", "")), ed.get("rel", "")
         if not src or not dst or rel not in VALID_RELS:
             skipped += 1

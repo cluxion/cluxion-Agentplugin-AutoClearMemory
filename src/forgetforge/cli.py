@@ -258,16 +258,23 @@ def _recall(args: argparse.Namespace) -> int:
 
 def _graph_ingest(args: argparse.Namespace) -> int:
     try:
-        payload = json.loads(sys.stdin.read().strip() or "{}")
+        try:
+            # ValueError covers JSONDecodeError and UnicodeDecodeError (bad UTF-8
+            # stdin); RecursionError comes from pathologically nested JSON.
+            payload = json.loads(sys.stdin.read().strip() or "{}")
+        except (ValueError, RecursionError) as e:
+            return _usage_error(f"invalid JSON on stdin: {e}")
         nodes = payload.get("nodes", []) if isinstance(payload, dict) else []
         edges = payload.get("edges", []) if isinstance(payload, dict) else []
+        if not isinstance(nodes, list):
+            nodes = []
+        if not isinstance(edges, list):
+            edges = []
         cfg = load_config()
         with closing(db.connect(cfg.db_path)) as conn:
             result = graph.ingest(conn, nodes, edges)
         print(json.dumps({"ok": True, **result}, ensure_ascii=False))
         return 0
-    except json.JSONDecodeError as e:
-        return _usage_error(f"invalid JSON on stdin: {e}")
     except (sqlite3.Error, OSError) as e:
         return _storage_error(e)
 

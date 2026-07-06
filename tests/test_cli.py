@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import sys
 from io import StringIO
@@ -286,7 +287,9 @@ def test_status_reports_stats_and_backend(capsys: pytest.CaptureFixture[str]) ->
     assert payload["engine_backend"] in {"native", "subprocess", "python"}
 
 
-def test_store_against_directory_db_returns_clean_error_json(capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_store_against_directory_db_returns_clean_error_json(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Make db_path a directory to trigger connect failure
     bad_db = tmp_path / "db.sqlite"
     bad_db.mkdir()
@@ -301,3 +304,43 @@ def test_store_against_directory_db_returns_clean_error_json(capsys: pytest.Capt
     assert payload["error"] == "storage_error"
     assert "message" in payload
     assert "error_type" not in payload
+
+
+def test_graph_ingest_invalid_utf8_stdin_returns_contract_error(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # UnicodeDecodeError (a ValueError) from sys.stdin.read() must stay in-contract
+    bad_stdin = io.TextIOWrapper(io.BytesIO(b"\xff\xfe{"), encoding="utf-8")
+    monkeypatch.setattr(sys, "stdin", bad_stdin)
+    code, payload = _run(capsys, "graph-ingest")
+    assert code == 2
+    assert payload["ok"] is False
+    assert payload["error"] == "invalid_argument"
+    assert "invalid JSON on stdin" in payload["message"]
+
+
+def test_graph_ingest_deeply_nested_json_returns_contract_error(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # pathological nesting raises RecursionError inside json.loads
+    monkeypatch.setattr(sys, "stdin", StringIO("[" * 100_000))
+    code, payload = _run(capsys, "graph-ingest")
+    assert code == 2
+    assert payload["ok"] is False
+    assert payload["error"] == "invalid_argument"
+
+
+def test_graph_ingest_non_dict_items_counted_as_skipped(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # non-dict node/edge items previously escaped as AttributeError (nd.get)
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        StringIO('{"nodes": [1, "x", {"id": "n1", "content": "c"}], "edges": [2]}'),
+    )
+    code, payload = _run(capsys, "graph-ingest")
+    assert code == 0
+    assert payload["ok"] is True
+    assert payload["nodes"] == 1
+    assert payload["skipped"] == 3

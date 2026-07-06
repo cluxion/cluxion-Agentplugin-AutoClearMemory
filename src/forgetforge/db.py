@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import os
 import sqlite3
 from dataclasses import dataclass
@@ -71,17 +72,23 @@ def connect(db_path: Path | str) -> sqlite3.Connection:
         conn = sqlite3.connect(db_path)
         try:
             conn.execute("PRAGMA busy_timeout=5000")
-            conn.execute("PRAGMA journal_mode = WAL")
             conn.row_factory = sqlite3.Row
             path_key = str(db_path.resolve())
             if path_key not in _initialized_db_paths:
-                conn.executescript(SCHEMA)
-                _ensure_fts(conn)
-                # graph columns (node_type etc.) are required by the retrieval queries,
-                # so every connection must have them — not just graph-command paths.
-                from forgetforge import graph
+                # concurrent fresh-home first-inits (parallel `forgetforge store`)
+                # race the rollback→WAL switch and the DDL burst below with
+                # immediate SQLITE_BUSY that busy_timeout can't wait out —
+                # serialize across processes. WAL is set by SCHEMA's first
+                # pragma and is persistent, so no per-connect pragma is needed.
+                with (db_path.parent / ".init.lock").open("w") as init_lock:
+                    fcntl.flock(init_lock, fcntl.LOCK_EX)
+                    conn.executescript(SCHEMA)
+                    _ensure_fts(conn)
+                    # graph columns (node_type etc.) are required by the retrieval queries,
+                    # so every connection must have them — not just graph-command paths.
+                    from forgetforge import graph
 
-                graph.ensure_graph_schema(conn)
+                    graph.ensure_graph_schema(conn)
                 _initialized_db_paths.add(path_key)
             _secure_db_files(db_path)
         except Exception:
