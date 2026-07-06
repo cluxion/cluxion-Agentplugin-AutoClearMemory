@@ -1,6 +1,6 @@
 ---
 name: forgetforge
-description: Recall-centric cross-session memory. Use when the user asks to remember/store or recall something (기억해, 저장해, 회상, 이전에 뭐였지), tags #keep_forever or #forget_this, when resuming work that references a previous session, or to surface past mistakes for the current task domain (graph-recall --mistakes).
+description: "Recall-centric cross-session memory. Use when the user asks to remember/store or recall something (기억해, 저장해, 회상, 이전에 뭐였지), tags #keep_forever or #forget_this, when resuming work that references a previous session, or to surface past mistakes for the current task domain (graph-recall --mistakes)."
 ---
 
 # ForgetForge

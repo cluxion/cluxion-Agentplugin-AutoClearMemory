@@ -1,6 +1,7 @@
 ---
 description: Recall memories from ForgetForge.
 argument-hint: "<query>"
+disable-model-invocation: true
 ---
 
 Run:

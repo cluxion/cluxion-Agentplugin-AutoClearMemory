@@ -5,6 +5,6 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     __version__ = version("cluxion-Agentplugin-AutoClearMemory")
 except PackageNotFoundError:  # pragma: no cover
-    __version__ = "0.3.29"
+    __version__ = "0.3.30"
 
 __all__ = ["__version__"]
