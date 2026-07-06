@@ -201,53 +201,59 @@ def _init(args: argparse.Namespace) -> int:
             error="unknown_agents",
             hint=f"valid values: all, {valid}. codex/claude install via their plugin marketplaces, not init.",
         )
-    cfg = load_config()
-    cfg.home.mkdir(parents=True, exist_ok=True)
-    cfg.archive_dir.mkdir(parents=True, exist_ok=True)
-    with closing(db.connect(cfg.db_path)):
-        pass  # create schema up front so later commands never race on DDL
-    installed = init_assets.install_adapter_assets(agents, cfg.home)
-    target = cfg.home / "config.yaml"
-    config_created = init_assets.install_example_config(target)
-    print(
-        json.dumps(
-            {
-                "ok": True,
-                "home": str(cfg.home),
-                "db": str(cfg.db_path),
-                "agents": installed,
-                "config": str(target),
-                "config_created": config_created,
-            },
-            ensure_ascii=False,
-            indent=2,
+    try:
+        cfg = load_config()
+        cfg.home.mkdir(parents=True, exist_ok=True)
+        cfg.archive_dir.mkdir(parents=True, exist_ok=True)
+        with closing(db.connect(cfg.db_path)):
+            pass  # create schema up front so later commands never race on DDL
+        installed = init_assets.install_adapter_assets(agents, cfg.home)
+        target = cfg.home / "config.yaml"
+        config_created = init_assets.install_example_config(target)
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "home": str(cfg.home),
+                    "db": str(cfg.db_path),
+                    "agents": installed,
+                    "config": str(target),
+                    "config_created": config_created,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
         )
-    )
-    return 0
+        return 0
+    except (sqlite3.Error, OSError) as e:
+        return _storage_error(e)
 
 
 def _status() -> int:
     from forgetforge import recall
 
-    cfg = load_config()
-    with closing(db.connect(cfg.db_path)) as conn:
-        stats = db.memory_stats(conn)
-        hot_rows = [row for row in db.list_memories(conn, limit=50) if row.tier == "hot"]
-        hot = recall.score_memories(hot_rows)
-    print(
-        json.dumps(
-            {
-                "ok": True,
-                "rust_engine": rust_bridge.engine_available(),
-                "engine_backend": rust_bridge.resolve_backend(),
-                "stats": stats,
-                "hot_samples": hot[:5],
-            },
-            ensure_ascii=False,
-            indent=2,
+    try:
+        cfg = load_config()
+        with closing(db.connect(cfg.db_path)) as conn:
+            stats = db.memory_stats(conn)
+            hot_rows = [row for row in db.list_memories(conn, limit=50) if row.tier == "hot"]
+            hot = recall.score_memories(hot_rows)
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "rust_engine": rust_bridge.engine_available(),
+                    "engine_backend": rust_bridge.resolve_backend(),
+                    "stats": stats,
+                    "hot_samples": hot[:5],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
         )
-    )
-    return 0
+        return 0
+    except (sqlite3.Error, OSError) as e:
+        return _storage_error(e)
 
 
 def _recall(args: argparse.Namespace) -> int:
@@ -382,11 +388,14 @@ def _import_brief(args: argparse.Namespace) -> int:
 
 
 def _hot_context(args: argparse.Namespace) -> int:
-    cfg = load_config()
-    with closing(db.connect(cfg.db_path)) as conn:
-        context = hot_inject.build_hot_context(conn, limit=int(args.limit))
-    print(json.dumps({"ok": True, "context": context, "has_hot": bool(context)}, ensure_ascii=False, indent=2))
-    return 0
+    try:
+        cfg = load_config()
+        with closing(db.connect(cfg.db_path)) as conn:
+            context = hot_inject.build_hot_context(conn, limit=int(args.limit))
+        print(json.dumps({"ok": True, "context": context, "has_hot": bool(context)}, ensure_ascii=False, indent=2))
+        return 0
+    except (sqlite3.Error, OSError) as e:
+        return _storage_error(e)
 
 
 def _keep(args: argparse.Namespace) -> int:
@@ -470,11 +479,14 @@ def _list_forgotten(args: argparse.Namespace) -> int:
 
 
 def _prune() -> int:
-    cfg = load_config()
-    with closing(db.connect(cfg.db_path)) as conn:
-        result = pruner.run_pruner(conn, config=cfg)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    try:
+        cfg = load_config()
+        with closing(db.connect(cfg.db_path)) as conn:
+            result = pruner.run_pruner(conn, config=cfg)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    except (sqlite3.Error, OSError) as e:
+        return _storage_error(e)
 
 
 def _doctor(args: argparse.Namespace) -> int:

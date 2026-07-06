@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import sqlite3
 import sys
 from io import StringIO
 from typing import TYPE_CHECKING
@@ -291,6 +292,38 @@ def test_cli_handlers_report_storage_errors(
         "message": "permission denied",
         "hint": "check FORGETFORGE_HOME and database permissions",
     }
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("status",),
+        ("hot-context",),
+        ("prune",),
+        ("init", "--agents", "hermes"),
+    ],
+)
+def test_corrupted_db_reports_storage_error(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    argv: tuple[str, ...],
+) -> None:
+    # Build a real sqlite file without going through cli so db.connect's
+    # per-process DDL cache stays cold, matching a fresh-process repro.
+    db_path = tmp_path / "db.sqlite"
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE t (x)")
+    conn.commit()
+    conn.close()
+    db_path.write_bytes(bytes(b ^ 0xFF for b in db_path.read_bytes()))
+
+    code = cli.main(list(argv))
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert code == 1
+    assert payload["ok"] is False
+    assert payload["error"] == "storage_error"
+    assert "Traceback" not in captured.err
 
 
 def test_status_reports_stats_and_backend(capsys: pytest.CaptureFixture[str]) -> None:
