@@ -12,10 +12,12 @@ forgetforge init --agents=hermes
 | Tool | 용도 |
 |------|------|
 | `forgetforge_store` | 저장/갱신 (contradiction warnings) |
-| `forgetforge_recall` | FTS 검색 + retrieval 기록 (`layer` 필수) |
+| `forgetforge_recall` | FTS 검색 + retrieval 기록 (`layer` 선택, 기본 `explicit`) |
 | `forgetforge_status` | tier·건강 상태 |
 | `forgetforge_keep` | `#keep_forever` |
 | `forgetforge_forget` | `#forget_this` |
+| `forgetforge_unforget` | forget 취소 (복원) |
+| `forgetforge_doctor` | 어댑터/DB 진단 |
 | `forgetforge_import_brief` | preprocessing/supercoder brief 수입 |
 | `forgetforge_hot_context` | hot tier 블록 (또는 `pre_llm_call` hook) |
 
