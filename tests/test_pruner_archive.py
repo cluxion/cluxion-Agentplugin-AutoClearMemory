@@ -86,6 +86,31 @@ def test_write_cold_archive_single_still_works(tmp_path: Path, monkeypatch):
         assert S_IMODE(path.stat().st_mode) == 0o600
 
 
+def test_write_cold_archive_batch_uses_unique_parquet_paths(tmp_path: Path, monkeypatch):
+    _, cfg = _isolated_conn(tmp_path, monkeypatch)
+    real_datetime = archive.datetime
+
+    class FixedDateTime:
+        @classmethod
+        def now(cls, tz):
+            return real_datetime(2026, 1, 1, tzinfo=tz)
+
+    monkeypatch.setattr(archive, "datetime", FixedDateTime)
+    first = archive.write_cold_archive_batch(
+        cfg,
+        [{"memory_id": "first", "content": "first body", "retention": 0.1, "tier": "cold"}],
+    )
+    second = archive.write_cold_archive_batch(
+        cfg,
+        [{"memory_id": "second", "content": "second body", "retention": 0.2, "tier": "cold"}],
+    )
+    if first["format"] == "jsonl" or second["format"] == "jsonl":
+        return
+    assert first["parquet"] != second["parquet"]
+    assert Path(first["parquet"]).exists()
+    assert Path(second["parquet"]).exists()
+
+
 def test_write_cold_archive_batch_empty_is_noop(tmp_path: Path, monkeypatch):
     _, cfg = _isolated_conn(tmp_path, monkeypatch)
     result = archive.write_cold_archive_batch(cfg, [])

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -39,7 +40,7 @@ def write_cold_archive_batch(
             }
         )
     stamp = archived_at.replace(":", "").replace("-", "").replace("+0000", "Z")
-    parquet_path = cfg.archive_dir / f"cold_{stamp}.parquet"
+    parquet_path = cfg.archive_dir / f"cold_{stamp}_{uuid.uuid4().hex[:8]}.parquet"
     jsonl_path = cfg.archive_dir / "cold_archive.jsonl"
     written = "jsonl"
     old_umask = os.umask(0o077)
