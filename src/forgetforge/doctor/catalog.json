@@ -115,9 +115,13 @@
       "native package not installed"
     ],
     "fix_steps": [
-      "Build+install the native backend: cd <plugin-root> && uv pip install ./rust/forgetforge_engine --python .venv/bin/python (or pip install ./rust/forgetforge_engine)",
+      "Build the merged platform wheel: bash scripts/build_local_wheel.sh",
+      "Resolve exactly one fresh dist-merged wheel to an absolute WHEEL path; never pass a glob to an install command",
+      "Install the exact artifact into the uv tool: uv tool install --force \"$WHEEL\"",
+      "Install that same artifact into Hermes: uv pip install --python \"$HOME/.hermes/hermes-agent/venv/bin/python\" --no-deps --reinstall \"$WHEEL\"",
+      "Verify Hermes dependencies: uv pip check --python \"$HOME/.hermes/hermes-agent/venv/bin/python\"",
       "Run: python -c 'import forgetforge_engine_native'",
-      "If ImportError, reinstall the bundled wheel; fallback keeps working meanwhile"
+      "If ImportError, reinstall the same merged wheel; fallback keeps working meanwhile"
     ],
     "change_robust": "Attempts the import + hasattr at runtime; WARN (not fail) because fallback works",
     "detection_method": "import forgetforge_engine_native succeeds"

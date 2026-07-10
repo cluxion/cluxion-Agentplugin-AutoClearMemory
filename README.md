@@ -163,10 +163,18 @@ Apache-2.0
 
 ## Native backend (optional, faster)
 
-The Rust backend is not built automatically. After install, run once:
+A pure source / `py3-none-any` install does **not** include the native engine. The supported
+local artifact is the repo's merged platform wheel from `scripts/build_local_wheel.sh`.
+Build once, then install that **same** `dist-merged/` wheel into the uv tool environment and
+the Hermes host Python environment:
 
 ```bash
-uv pip install ./rust/forgetforge_engine --python .venv/bin/python
+bash scripts/build_local_wheel.sh
+WHEEL="$(python3 -c 'from pathlib import Path; w=list(Path("dist-merged").glob("cluxion_agentplugin_autoclearmemory-*.whl")); assert len(w)==1, f"expected one fresh merged wheel, found {len(w)}"; print(w[0].resolve())')"
+uv tool install --force "$WHEEL"
+HERMES_PY="$HOME/.hermes/hermes-agent/venv/bin/python"
+uv pip install --python "$HERMES_PY" --no-deps --reinstall "$WHEEL"
+uv pip check --python "$HERMES_PY"
 ```
 
-Without it the plugin falls back to a slower pure-Python path (`doctor` reports `native_module_importable`).
+Without the native module the plugin falls back to a slower pure-Python path (`doctor` reports `native_module_importable`).

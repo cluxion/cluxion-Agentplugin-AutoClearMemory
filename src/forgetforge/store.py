@@ -8,6 +8,19 @@ from forgetforge import contradiction, db, graph, rust_bridge
 from forgetforge.config import load_config
 
 
+def _normalize_required_text(value: str, field: str) -> str:
+    text = value.strip()
+    if not text:
+        raise ValueError(f"{field} is required")
+    return text
+
+
+def _require_finite_score(name: str, value: float) -> None:
+    # Floats only: int is always finite; math.isfinite(huge_int) OverflowErrors.
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"{name} must be finite, got {value!r}")
+
+
 def store_memory(
     conn,
     *,
@@ -26,22 +39,15 @@ def store_memory(
     recall/hot-injection while graph paths can still reach it; expire_days
     sets expire_at so the pruner's TTL sweep hard-deletes it later.
     """
-    memory_id = memory_id.strip()
-    content = content.strip()
-    if not memory_id:
-        raise ValueError("memory_id is required")
-    if not content:
-        raise ValueError("content is required")
+    memory_id = _normalize_required_text(memory_id, "memory_id")
+    content = _normalize_required_text(content, "content")
     if node_type is not None and node_type not in graph.VALID_NODE_TYPES:
         valid = ", ".join(sorted(graph.VALID_NODE_TYPES))
         raise ValueError(f"invalid node_type: {node_type} (valid: {valid})")
     if expire_days is not None and expire_days < 0:
         raise ValueError("expire_days must be >= 0")
-    # Floats only: int is always finite; math.isfinite(huge_int) OverflowErrors.
-    if isinstance(importance, float) and not math.isfinite(importance):
-        raise ValueError(f"importance must be finite, got {importance!r}")
-    if isinstance(frequency, float) and not math.isfinite(frequency):
-        raise ValueError(f"frequency must be finite, got {frequency!r}")
+    _require_finite_score("importance", importance)
+    _require_finite_score("frequency", frequency)
     expire_at = int(time.time()) + int(expire_days) * 86400 if expire_days is not None else None
     # SQLite INTEGER is signed 64-bit; reject overflow before write (no arbitrary day cap).
     if expire_at is not None and not (-(1 << 63) <= expire_at <= (1 << 63) - 1):

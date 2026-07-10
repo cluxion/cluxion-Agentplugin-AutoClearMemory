@@ -321,6 +321,8 @@ def _graph_expire_session(args: argparse.Namespace) -> int:
             marked = graph.expire_session(conn, str(args.session_id), grace_days=int(args.grace_days))
         print(json.dumps({"ok": True, "marked": marked}, ensure_ascii=False))
         return 0
+    except ValueError as e:
+        return _usage_error(str(e))
     except (sqlite3.Error, OSError) as e:
         return _storage_error(e)
 

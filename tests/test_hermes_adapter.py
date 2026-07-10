@@ -159,3 +159,124 @@ def test_handler_coerces_none_args_and_catches_type_errors() -> None:
     payload = _call(ctx, "forgetforge_store", {"memory_id": "t1", "content": "x", "importance": [1, 2]})
     assert payload["ok"] is False
     assert "error" in payload
+
+
+def _assert_home_completely_empty(home: Path) -> None:
+    assert list(home.iterdir()) == []
+    assert not (home / ".init.lock").exists()
+    assert not (home / "db.sqlite").exists()
+    assert not (home / "db.sqlite-wal").exists()
+    assert not (home / "db.sqlite-shm").exists()
+
+
+@pytest.mark.parametrize(
+    "tool,args,error_fragment",
+    [
+        ("forgetforge_store", {"memory_id": "", "content": "x"}, "memory_id is required"),
+        ("forgetforge_store", {"memory_id": "   ", "content": "x"}, "memory_id is required"),
+        ("forgetforge_store", {"memory_id": "m1", "content": ""}, "content is required"),
+        ("forgetforge_store", {"memory_id": "m1", "content": "   "}, "content is required"),
+        (
+            "forgetforge_store",
+            {"memory_id": "m1", "content": "x", "importance": float("nan")},
+            "importance must be finite",
+        ),
+        (
+            "forgetforge_store",
+            {"memory_id": "m1", "content": "x", "frequency": float("inf")},
+            "frequency must be finite",
+        ),
+        ("forgetforge_import_brief", {"source": "manual", "brief": ""}, "brief is required"),
+        ("forgetforge_import_brief", {"source": "manual", "brief": "   "}, "brief is required"),
+        (
+            "forgetforge_import_brief",
+            {"source": "not-a-source", "brief": "hello"},
+            "source must be preprocessing, supercoder, or manual",
+        ),
+        (
+            "forgetforge_import_brief",
+            {"source": "manual", "brief": "hello", "importance": float("nan")},
+            "importance must be finite",
+        ),
+    ],
+)
+def test_invalid_store_import_returns_ok_false_and_leaves_home_empty(
+    isolated_home: Path, tool: str, args: dict, error_fragment: str
+) -> None:
+    ctx = FakeCtx()
+    hermes.register(ctx)
+    payload = _call(ctx, tool, args)
+    assert payload["ok"] is False
+    assert error_fragment in payload["error"]
+    _assert_home_completely_empty(isolated_home)
+
+
+@pytest.mark.parametrize(
+    "tool,args",
+    [
+        (
+            "forgetforge_store",
+            {"memory_id": "", "content": "", "importance": [1, 2]},
+        ),
+        (
+            "forgetforge_import_brief",
+            {"source": "manual", "brief": "", "importance": object()},
+        ),
+    ],
+)
+def test_numeric_conversion_error_precedes_blank_field_and_leaves_home_empty(
+    isolated_home: Path, tool: str, args: dict
+) -> None:
+    # Coercion is left-to-right: float(...) fails before pure blank-field validation.
+    ctx = FakeCtx()
+    hermes.register(ctx)
+    payload = _call(ctx, tool, args)
+    assert payload["ok"] is False
+    assert "required" not in payload["error"]
+    _assert_home_completely_empty(isolated_home)
+
+
+@pytest.mark.parametrize(
+    "tool,args,error_fragment",
+    [
+        (
+            "forgetforge_store",
+            {"memory_id": " ", "content": " ", "importance": float("nan"), "frequency": float("inf")},
+            "memory_id is required",
+        ),
+        (
+            "forgetforge_store",
+            {"memory_id": "m1", "content": " ", "importance": float("nan"), "frequency": float("inf")},
+            "content is required",
+        ),
+        (
+            "forgetforge_store",
+            {"memory_id": "m1", "content": "ok", "importance": float("nan"), "frequency": float("inf")},
+            "importance must be finite",
+        ),
+        (
+            "forgetforge_import_brief",
+            {"source": "nope", "brief": " ", "importance": float("nan")},
+            "brief is required",
+        ),
+        (
+            "forgetforge_import_brief",
+            {"source": "nope", "brief": "hello", "importance": float("nan")},
+            "source must be preprocessing, supercoder, or manual",
+        ),
+    ],
+)
+def test_multi_invalid_store_import_validation_order(
+    isolated_home: Path, tool: str, args: dict, error_fragment: str
+) -> None:
+    # When conversions succeed, pure validation order is fixed and home stays empty.
+    ctx = FakeCtx()
+    hermes.register(ctx)
+    payload = _call(ctx, tool, args)
+    assert payload["ok"] is False
+    assert payload["error"] == error_fragment or error_fragment in payload["error"]
+    if tool == "forgetforge_store" and error_fragment == "memory_id is required":
+        assert payload["error"] == "memory_id is required"
+    if tool == "forgetforge_import_brief" and error_fragment == "brief is required":
+        assert payload["error"] == "brief is required"
+    _assert_home_completely_empty(isolated_home)

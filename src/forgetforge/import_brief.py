@@ -6,11 +6,27 @@ from typing import Any
 
 from forgetforge import store
 
+_VALID_SOURCES = frozenset({"preprocessing", "supercoder", "manual"})
+
 
 def _slug(source: str, brief: str) -> str:
     digest = hashlib.sha256(brief.encode("utf-8")).hexdigest()[:12]
     safe = re.sub(r"[^a-z0-9-]+", "-", source.lower()).strip("-") or "brief"
     return f"{safe}-{digest}"
+
+
+def _normalize_brief(brief: str) -> str:
+    text = brief.strip()
+    if not text:
+        raise ValueError("brief is required")
+    return text
+
+
+def _normalize_source(source: str) -> str:
+    src = source.strip().lower() or "manual"
+    if src not in _VALID_SOURCES:
+        raise ValueError("source must be preprocessing, supercoder, or manual")
+    return src
 
 
 def import_brief(
@@ -22,12 +38,9 @@ def import_brief(
     importance: float = 0.65,
 ) -> dict[str, Any]:
     """Import preprocessing/supercoder brief into episodic memory."""
-    text = brief.strip()
-    if not text:
-        raise ValueError("brief is required")
-    src = source.strip().lower() or "manual"
-    if src not in {"preprocessing", "supercoder", "manual"}:
-        raise ValueError("source must be preprocessing, supercoder, or manual")
+    text = _normalize_brief(brief)
+    src = _normalize_source(source)
+    store._require_finite_score("importance", importance)
     mid = memory_id.strip() if memory_id else _slug(src, text)
     prefix = {"preprocessing": "[preprocessing brief]", "supercoder": "[supercoder brief]", "manual": "[brief]"}[src]
     content = f"{prefix}\n{text}"

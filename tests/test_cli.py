@@ -440,6 +440,23 @@ def test_store_against_directory_db_returns_clean_error_json(
     assert "error_type" not in payload
 
 
+def test_graph_expire_session_overflow_grace_days_returns_invalid_argument(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Overflow-scale --grace-days: usage-style invalid_argument on stdout, exit 2, no traceback.
+    code = cli.main(["graph-expire-session", "s1", "--grace-days", str(2**62)])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert code == 2
+    assert captured.err == ""
+    assert payload == {
+        "ok": False,
+        "error": "invalid_argument",
+        "message": "grace_days is too large",
+        "hint": "check required CLI arguments",
+    }
+
+
 def test_graph_ingest_invalid_utf8_stdin_returns_contract_error(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

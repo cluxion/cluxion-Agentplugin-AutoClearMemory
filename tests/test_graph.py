@@ -6,6 +6,8 @@ from __future__ import annotations
 import sqlite3
 import time
 
+import pytest
+
 from forgetforge import db, graph
 
 
@@ -102,6 +104,67 @@ def test_ttl_cascade(tmp_path):
     assert removed == 1
     assert graph.graph_recall(conn, session="s1") == []
     assert conn.execute("SELECT COUNT(*) FROM memories WHERE id='keep'").fetchone()[0] == 1
+
+
+def test_expire_session_rejects_positive_int64_overflow_before_schema(tmp_path, monkeypatch):
+    p = tmp_path / "empty.db"
+    conn = sqlite3.connect(p)
+    monkeypatch.setattr(graph, "_now", lambda: 0)
+    with pytest.raises(ValueError, match="grace_days is too large"):
+        graph.expire_session(conn, "s1", grace_days=2**62)
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master").fetchall()}
+    assert tables == set()
+    conn.close()
+
+
+def test_expire_session_rejects_negative_int64_overflow_before_schema(tmp_path, monkeypatch):
+    p = tmp_path / "empty-neg.db"
+    conn = sqlite3.connect(p)
+    monkeypatch.setattr(graph, "_now", lambda: 0)
+    with pytest.raises(ValueError, match="grace_days is too large"):
+        graph.expire_session(conn, "s1", grace_days=-(2**62))
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master").fetchall()}
+    assert tables == set()
+    conn.close()
+
+
+def test_expire_session_overflow_does_not_mutate_pre_extension_or_existing_row(tmp_path, monkeypatch):
+    # Pre-extension DB (base SCHEMA, no graph columns): overflow must not migrate or rewrite rows.
+    p = tmp_path / "legacy.db"
+    conn = sqlite3.connect(p)
+    conn.executescript(db.SCHEMA)
+    conn.execute(
+        "INSERT INTO memories (id, content, tier, importance, created_at, updated_at) "
+        "VALUES ('s1-task', 'task', 'hot', 0.5, '2020-01-01', '2020-01-01')"
+    )
+    conn.commit()
+    cols_before = {r[1] for r in conn.execute("PRAGMA table_info(memories)").fetchall()}
+    assert "expire_at" not in cols_before
+    assert "session_id" not in cols_before
+    row_before = conn.execute("SELECT * FROM memories WHERE id = 's1-task'").fetchone()
+    master_before = list(conn.execute("SELECT type, name, sql FROM sqlite_master ORDER BY name").fetchall())
+    monkeypatch.setattr(graph, "_now", lambda: 0)
+    with pytest.raises(ValueError, match="grace_days is too large"):
+        graph.expire_session(conn, "s1", grace_days=2**62)
+    cols_after = {r[1] for r in conn.execute("PRAGMA table_info(memories)").fetchall()}
+    assert cols_after == cols_before
+    assert "expire_at" not in cols_after
+    row_after = conn.execute("SELECT * FROM memories WHERE id = 's1-task'").fetchone()
+    assert tuple(row_after) == tuple(row_before)
+    master_after = list(conn.execute("SELECT type, name, sql FROM sqlite_master ORDER BY name").fetchall())
+    assert master_after == master_before
+    conn.close()
+
+
+def test_expire_session_negative_grace_within_sqlite_range_is_valid(tmp_path, monkeypatch):
+    conn = _fresh(tmp_path)
+    graph.ingest(conn, [{"id": "s1-task", "content": "task", "session_id": "s1"}], [])
+    monkeypatch.setattr(graph, "_now", lambda: 1_700_000_000)
+    marked = graph.expire_session(conn, "s1", grace_days=-1)
+    assert marked == 1
+    expire_at = conn.execute("SELECT expire_at FROM memories WHERE id = 's1-task'").fetchone()[0]
+    assert expire_at == 1_700_000_000 - 86400
+    conn.close()
 
 
 def test_context_savings(tmp_path):

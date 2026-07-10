@@ -188,15 +188,25 @@ def _handle_doctor(args: dict[str, object]) -> dict[str, object]:
 
 
 def _handle_store(args: dict[str, object]) -> dict[str, object]:
+    # Coerce left-to-right, pure-validate, then open storage (no partial init on bad input).
+    memory_id = str(args.get("memory_id", ""))
+    content = str(args.get("content", ""))
+    importance = float(args.get("importance", 0.5))
+    frequency = float(args.get("frequency", 0.0))
+    is_procedural = bool(args.get("is_procedural", False))
+    store_api._normalize_required_text(memory_id, "memory_id")
+    store_api._normalize_required_text(content, "content")
+    store_api._require_finite_score("importance", importance)
+    store_api._require_finite_score("frequency", frequency)
     conn = _conn()
     try:
         stored = store_api.store_memory(
             conn,
-            memory_id=str(args.get("memory_id", "")),
-            content=str(args.get("content", "")),
-            importance=float(args.get("importance", 0.5)),
-            frequency=float(args.get("frequency", 0.0)),
-            is_procedural=bool(args.get("is_procedural", False)),
+            memory_id=memory_id,
+            content=content,
+            importance=importance,
+            frequency=frequency,
+            is_procedural=is_procedural,
         )
         return {"ok": True, "stored": stored}
     finally:
@@ -265,14 +275,22 @@ def _handle_unforget(args: dict[str, object]) -> dict[str, object]:
 
 
 def _handle_import_brief(args: dict[str, object]) -> dict[str, object]:
+    # Coerce left-to-right, pure-validate, then open storage (no partial init on bad input).
+    source = str(args.get("source", "manual"))
+    brief = str(args.get("brief", ""))
+    memory_id = str(args.get("memory_id", "")).strip() or None
+    importance = float(args.get("importance", 0.65))
+    import_brief._normalize_brief(brief)
+    import_brief._normalize_source(source)
+    store_api._require_finite_score("importance", importance)
     conn = _conn()
     try:
         return import_brief.import_brief(
             conn,
-            source=str(args.get("source", "manual")),
-            brief=str(args.get("brief", "")),
-            memory_id=str(args.get("memory_id", "")).strip() or None,
-            importance=float(args.get("importance", 0.65)),
+            source=source,
+            brief=brief,
+            memory_id=memory_id,
+            importance=importance,
         )
     finally:
         conn.close()

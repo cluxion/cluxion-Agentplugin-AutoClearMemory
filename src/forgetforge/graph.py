@@ -270,8 +270,11 @@ def graph_recall(
 def expire_session(conn, session_id: str, grace_days: int = 1) -> int:
     """② TTL cascade: mark all nodes owned by a deleted leader session for expiry.
     The existing pruner sweeps rows past expire_at — no new daemon."""
-    ensure_graph_schema(conn)
     deadline = _now() + grace_days * 86400
+    # SQLite INTEGER is signed 64-bit; reject overflow before schema/write (no day cap).
+    if not (-(1 << 63) <= deadline <= (1 << 63) - 1):
+        raise ValueError("grace_days is too large")
+    ensure_graph_schema(conn)
     cur = conn.execute(
         "UPDATE memories SET expire_at = ? WHERE session_id = ? AND keep_forever = 0",
         (deadline, session_id),
