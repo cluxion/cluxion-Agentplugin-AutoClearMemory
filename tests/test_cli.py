@@ -130,6 +130,40 @@ def test_store_huge_expire_days_returns_invalid_argument_with_no_row(
             conn.close()
 
 
+@pytest.mark.parametrize(
+    "score_args,label",
+    [
+        (["--importance", "nan"], "importance-nan"),
+        (["--importance", "inf"], "importance-inf"),
+        (["--importance=-inf"], "importance-ninf"),  # equals form: bare -inf is an argparse option token
+        (["--frequency", "nan"], "frequency-nan"),
+        (["--frequency", "inf"], "frequency-inf"),
+        (["--frequency=-inf"], "frequency-ninf"),
+    ],
+)
+def test_store_non_finite_score_returns_invalid_argument_with_no_row(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, score_args: list[str], label: str
+) -> None:
+    # Non-finite --importance/--frequency: structured invalid_argument exit 2, no DB row.
+    memory_id = f"m-nonfin-{label}"
+    code = cli.main(["store", memory_id, "--content", "must not persist", *score_args])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert code == 2
+    assert captured.err == ""
+    assert payload["ok"] is False
+    assert payload["error"] == "invalid_argument"
+    assert "hint" in payload
+    db_path = tmp_path / "db.sqlite"
+    if db_path.exists():
+        conn = sqlite3.connect(db_path)
+        try:
+            assert conn.execute("SELECT COUNT(*) FROM memories WHERE id = ?", (memory_id,)).fetchone()[0] == 0
+            assert conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0] == 0
+        finally:
+            conn.close()
+
+
 def test_store_missing_content_file_returns_usage_or_invalid_argument(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:

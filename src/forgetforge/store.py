@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import time
 from typing import Any
 
@@ -36,6 +37,11 @@ def store_memory(
         raise ValueError(f"invalid node_type: {node_type} (valid: {valid})")
     if expire_days is not None and expire_days < 0:
         raise ValueError("expire_days must be >= 0")
+    # Floats only: int is always finite; math.isfinite(huge_int) OverflowErrors.
+    if isinstance(importance, float) and not math.isfinite(importance):
+        raise ValueError(f"importance must be finite, got {importance!r}")
+    if isinstance(frequency, float) and not math.isfinite(frequency):
+        raise ValueError(f"frequency must be finite, got {frequency!r}")
     expire_at = int(time.time()) + int(expire_days) * 86400 if expire_days is not None else None
     # SQLite INTEGER is signed 64-bit; reject overflow before write (no arbitrary day cap).
     if expire_at is not None and not (-(1 << 63) <= expire_at <= (1 << 63) - 1):

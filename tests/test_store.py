@@ -133,6 +133,91 @@ def test_store_rejects_invalid_node_type_and_negative_expiry(tmp_path: Path, mon
     conn.close()
 
 
+@pytest.mark.parametrize("field,value", [
+    ("importance", float("nan")),
+    ("importance", float("inf")),
+    ("importance", float("-inf")),
+    ("frequency", float("nan")),
+    ("frequency", float("inf")),
+    ("frequency", float("-inf")),
+])
+def test_store_rejects_non_finite_importance_frequency_before_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str, value: float
+) -> None:
+    # NaN/+Inf/-Inf must raise ValueError; never clamp-persist or touch contradiction/DB.
+    monkeypatch.setenv("FORGETFORGE_HOME", str(tmp_path))
+    conn = db.connect(tmp_path / "db.sqlite")
+    called: list[str] = []
+
+    def _boom(*_a, **_k):
+        called.append("contradiction")
+        raise AssertionError("contradiction must not run for non-finite scores")
+
+    monkeypatch.setattr("forgetforge.contradiction.detect_contradictions", _boom)
+    kwargs = {field: value}
+    with pytest.raises(ValueError, match=field):
+        store.store_memory(conn, memory_id="non-finite", content="must not persist", **kwargs)
+    assert called == []
+    assert db.get_memory(conn, "non-finite") is None
+    assert conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0] == 0
+    conn.close()
+
+
+def test_store_clamps_finite_out_of_range_importance_frequency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Finite values outside [0,1] stay clamped; only non-finite is rejected.
+    # Arbitrary-size Python ints must clamp (not OverflowError via float conversion).
+    monkeypatch.setenv("FORGETFORGE_HOME", str(tmp_path))
+    conn = db.connect(tmp_path / "db.sqlite")
+    store.store_memory(
+        conn,
+        memory_id="clamp-hi",
+        content="high importance low frequency",
+        importance=1.5,
+        frequency=-0.2,
+    )
+    row = db.get_memory(conn, "clamp-hi")
+    assert row is not None
+    assert row.importance == 1.0
+    assert row.frequency == 0.0
+    store.store_memory(
+        conn,
+        memory_id="clamp-lo",
+        content="low importance high frequency",
+        importance=-3.0,
+        frequency=2.0,
+    )
+    row_lo = db.get_memory(conn, "clamp-lo")
+    assert row_lo is not None
+    assert row_lo.importance == 0.0
+    assert row_lo.frequency == 1.0
+    huge = 10**400
+    store.store_memory(
+        conn,
+        memory_id="clamp-huge-pos",
+        content="huge positive ints clamp to 1.0",
+        importance=huge,
+        frequency=huge,
+    )
+    row_pos = db.get_memory(conn, "clamp-huge-pos")
+    assert row_pos is not None
+    assert row_pos.importance == 1.0
+    assert row_pos.frequency == 1.0
+    store.store_memory(
+        conn,
+        memory_id="clamp-huge-neg",
+        content="huge negative ints clamp to 0.0",
+        importance=-huge,
+        frequency=-huge,
+    )
+    row_neg = db.get_memory(conn, "clamp-huge-neg")
+    assert row_neg is not None
+    assert row_neg.importance == 0.0
+    assert row_neg.frequency == 0.0
+    conn.close()
+
+
 def test_recall_retention_is_user_normalized(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("FORGETFORGE_HOME", str(tmp_path))
     conn = db.connect(tmp_path / "db.sqlite")
