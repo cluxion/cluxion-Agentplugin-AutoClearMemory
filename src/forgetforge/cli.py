@@ -187,7 +187,10 @@ def _read_text_argument(name: str, value: str | None, file_path: str | None) -> 
     if value == "-" or file_path == "-":
         return sys.stdin.read()
     if file_path is not None:
-        return Path(file_path).read_text(encoding="utf-8")
+        try:
+            return Path(file_path).read_text(encoding="utf-8")
+        except (FileNotFoundError, NotADirectoryError, IsADirectoryError) as e:
+            raise ValueError(f"cannot read {file_option} path {file_path}: {e}") from e
     return str(value)
 
 
@@ -365,6 +368,8 @@ def _pruner_daemon(args: argparse.Namespace) -> int:
             )
         )
         return 2
+    except OSError as e:
+        return _storage_error(e)
 
 
 def _import_brief(args: argparse.Namespace) -> int:

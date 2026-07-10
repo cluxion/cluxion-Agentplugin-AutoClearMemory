@@ -123,6 +123,66 @@ def test_invalid_input_rejected_not_raised(tmp_path):
     assert res["nodes"] == 1 and res["edges"] == 0 and res["skipped"] == 2
 
 
+def test_ingest_skips_invalid_importance_and_weight_only(tmp_path):
+    # mixed valid/invalid floats: skip only the bad items, keep the good ones
+    conn = _fresh(tmp_path)
+    res = graph.ingest(
+        conn,
+        [
+            {"id": "good", "content": "ok", "importance": 0.7},
+            {"id": "bad-imp", "content": "ok", "importance": "nope"},
+        ],
+        [
+            {"src": "good", "dst": "good", "rel": "relates_to", "weight": 1.0},
+            {"src": "good", "dst": "good", "rel": "owns", "weight": "nope"},
+        ],
+    )
+    assert res == {"nodes": 1, "edges": 1, "skipped": 2}
+    assert conn.execute("SELECT COUNT(*) FROM memories WHERE id = 'good'").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM memories WHERE id = 'bad-imp'").fetchone()[0] == 0
+    assert conn.execute(
+        "SELECT COUNT(*) FROM graph_edges WHERE src_id = 'good' AND dst_id = 'good' AND rel = 'relates_to'"
+    ).fetchone()[0] == 1
+    assert conn.execute(
+        "SELECT COUNT(*) FROM graph_edges WHERE src_id = 'good' AND dst_id = 'good' AND rel = 'owns'"
+    ).fetchone()[0] == 0
+
+
+def test_ingest_skips_non_finite_importance_and_weight(tmp_path):
+    # nan/inf/-inf and overflow (10**400) must be skipped, not inserted or raised
+    conn = _fresh(tmp_path)
+    res = graph.ingest(
+        conn,
+        [
+            {"id": "good", "content": "ok", "importance": 0.7},
+            {"id": "nan-imp", "content": "ok", "importance": float("nan")},
+            {"id": "inf-imp", "content": "ok", "importance": float("inf")},
+            {"id": "ninf-imp", "content": "ok", "importance": float("-inf")},
+            {"id": "overflow-imp", "content": "ok", "importance": 10**400},
+        ],
+        [
+            {"src": "good", "dst": "good", "rel": "relates_to", "weight": 1.0},
+            {"src": "good", "dst": "good", "rel": "owns", "weight": float("nan")},
+            {"src": "good", "dst": "good", "rel": "supersedes", "weight": float("inf")},
+            {"src": "good", "dst": "good", "rel": "decided", "weight": float("-inf")},
+            {"src": "good", "dst": "good", "rel": "touched", "weight": 10**400},
+        ],
+    )
+    assert res["nodes"] == 1
+    assert res["edges"] == 1
+    assert res["skipped"] == 8
+    assert conn.execute("SELECT COUNT(*) FROM memories WHERE id = 'good'").fetchone()[0] == 1
+    assert conn.execute(
+        "SELECT COUNT(*) FROM memories WHERE id IN ('nan-imp', 'inf-imp', 'ninf-imp', 'overflow-imp')"
+    ).fetchone()[0] == 0
+    assert conn.execute(
+        "SELECT COUNT(*) FROM graph_edges WHERE src_id = 'good' AND dst_id = 'good' AND rel = 'relates_to'"
+    ).fetchone()[0] == 1
+    assert conn.execute(
+        "SELECT COUNT(*) FROM graph_edges WHERE rel IN ('owns', 'supersedes', 'decided', 'touched')"
+    ).fetchone()[0] == 0
+
+
 def test_mistake_recall_routes_by_domain_tags(tmp_path):
     # regression: mistake tags live in domain_tags, not content — routing must see them
     conn = _fresh(tmp_path)

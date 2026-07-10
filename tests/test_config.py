@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+import pytest
 
 from forgetforge.config import default_home, load_config
-
-if TYPE_CHECKING:
-    import pytest
 
 
 def test_default_home_honours_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -57,3 +55,45 @@ def test_load_config_ignores_malformed_sections(tmp_path: Path, monkeypatch: pyt
     cfg = load_config()
     assert cfg.pruner_interval_hours == 6
     assert cfg.cold_retention_threshold == 0.40
+
+
+def test_load_config_malformed_yaml_raises_oserror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # CLI maps OSError → storage_error; parse failures must not escape as YAMLError.
+    monkeypatch.setenv("FORGETFORGE_HOME", str(tmp_path))
+    (tmp_path / "config.yaml").write_text(":\nbad: [\n", encoding="utf-8")
+    with pytest.raises(OSError):
+        load_config()
+
+
+def test_load_config_invalid_numeric_raises_oserror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Same CLI mapping contract: bad numbers become OSError, not ValueError.
+    monkeypatch.setenv("FORGETFORGE_HOME", str(tmp_path))
+    (tmp_path / "config.yaml").write_text(
+        "pruner:\n  interval_hours: not-a-number\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(OSError):
+        load_config()
+
+
+def test_load_config_non_finite_values_raise_oserror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Non-finite YAML numbers must become OSError (not OverflowError / silent NaN).
+    monkeypatch.setenv("FORGETFORGE_HOME", str(tmp_path))
+    (tmp_path / "config.yaml").write_text(
+        "pruner:\n  interval_hours: .inf\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(OSError):
+        load_config()
+    (tmp_path / "config.yaml").write_text(
+        "thresholds:\n  cold_retention: .nan\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(OSError):
+        load_config()

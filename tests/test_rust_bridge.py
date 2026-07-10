@@ -137,3 +137,23 @@ def test_subprocess_backend_timeout_falls_back_to_python(monkeypatch) -> None:
     payload = {"days_since_recall": 3.0, "retrieval_count": 2.0, "importance": 0.5, "frequency": 0.2}
     assert rust_bridge.compute_retention(**payload) == rust_bridge._python_retention(payload)
     assert seen["timeout"] == 30
+
+
+def test_non_executable_engine_bin_falls_back_to_python(tmp_path: Path, monkeypatch) -> None:
+    # existing FORGETFORGE_ENGINE_BIN that is not executable must not raise PermissionError
+    bin_path = tmp_path / "forgetforge-engine"
+    bin_path.write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+    bin_path.chmod(0o644)
+
+    monkeypatch.setenv(rust_bridge.ENGINE_BIN_ENV, str(bin_path))
+    monkeypatch.delenv(rust_bridge.ENGINE_BACKEND_ENV, raising=False)
+    monkeypatch.setattr(rust_bridge, "_native_module", lambda: None)
+    rust_bridge._backend_cache = None
+    rust_bridge._env_snapshot = None
+
+    # chmod 0644 + native disabled: resolve as python fallback before compute
+    assert rust_bridge.resolve_backend() == "python"
+    assert rust_bridge.engine_available() is False
+
+    payload = {"days_since_recall": 3.0, "retrieval_count": 2.0, "importance": 0.5, "frequency": 0.2}
+    assert rust_bridge.compute_retention(**payload) == rust_bridge._python_retention(payload)

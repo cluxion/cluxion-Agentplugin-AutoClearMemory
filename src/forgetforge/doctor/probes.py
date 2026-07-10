@@ -293,9 +293,11 @@ def config_file_loadable(ctx: DoctorContext) -> tuple[str, str]:
             return "warn", "yaml not mapping"
         try:
             load_config(cfg_path)
-        except (ValueError, TypeError) as e:
+        except (ValueError, TypeError, OSError) as e:
             return "fail", f"config values not usable: {type(e).__name__}: {e}"
         return "pass", "yaml loaded and values usable"
+    except (OSError, yaml.YAMLError, UnicodeError) as e:
+        return "fail", f"yaml load issue: {type(e).__name__}"
     except Exception as e:
         return "skip", f"yaml load issue: {type(e).__name__}"
 

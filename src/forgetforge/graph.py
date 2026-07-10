@@ -13,6 +13,7 @@ All bounds are module constants asserted by tests and the `graph_bounds_enforced
 
 from __future__ import annotations
 
+import math
 import sqlite3
 import time
 from typing import Any
@@ -99,6 +100,14 @@ def ingest(conn, nodes: list[dict], edges: list[dict]) -> dict[str, int]:
         if ntype not in VALID_NODE_TYPES:
             ntype = "memory"
         content = str(nd.get("content", ""))
+        try:
+            importance = float(nd.get("importance", 0.5))
+        except (TypeError, ValueError, OverflowError):
+            skipped += 1
+            continue
+        if not math.isfinite(importance):
+            skipped += 1
+            continue
         conn.execute(
             """
             INSERT INTO memories (id, content, tier, importance, created_at, updated_at,
@@ -113,7 +122,7 @@ def ingest(conn, nodes: list[dict], edges: list[dict]) -> dict[str, int]:
             (
                 nid,
                 content,
-                float(nd.get("importance", 0.5)),
+                importance,
                 now,
                 now,
                 ntype,
@@ -134,10 +143,18 @@ def ingest(conn, nodes: list[dict], edges: list[dict]) -> dict[str, int]:
         if not src or not dst or rel not in VALID_RELS:
             skipped += 1
             continue
+        try:
+            weight = float(ed.get("weight", 1.0))
+        except (TypeError, ValueError, OverflowError):
+            skipped += 1
+            continue
+        if not math.isfinite(weight):
+            skipped += 1
+            continue
         conn.execute(
             """INSERT INTO graph_edges (src_id, dst_id, rel, weight) VALUES (?, ?, ?, ?)
                ON CONFLICT(src_id, dst_id, rel) DO UPDATE SET weight=excluded.weight""",
-            (src, dst, rel, float(ed.get("weight", 1.0))),
+            (src, dst, rel, weight),
         )
         n_edges += 1
     conn.commit()

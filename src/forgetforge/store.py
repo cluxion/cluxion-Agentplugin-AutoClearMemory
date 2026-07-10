@@ -37,6 +37,9 @@ def store_memory(
     if expire_days is not None and expire_days < 0:
         raise ValueError("expire_days must be >= 0")
     expire_at = int(time.time()) + int(expire_days) * 86400 if expire_days is not None else None
+    # SQLite INTEGER is signed 64-bit; reject overflow before write (no arbitrary day cap).
+    if expire_at is not None and not (-(1 << 63) <= expire_at <= (1 << 63) - 1):
+        raise ValueError("expire_days is too large")
     warnings: list[dict[str, Any]] = []
     if check_contradictions:
         warnings = [

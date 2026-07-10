@@ -170,7 +170,7 @@ def _invoke_subprocess(command: str, payload: dict[str, Any]) -> dict[str, Any] 
             check=False,
             timeout=30,
         )
-    except subprocess.TimeoutExpired:
+    except (subprocess.TimeoutExpired, OSError):
         return None
     if completed.returncode != 0:
         return None
@@ -232,7 +232,9 @@ def _python_tier(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _binary_available() -> bool:
     binary = _binary()
-    return shutil.which(binary) is not None or Path(binary).exists()
+    which = shutil.which(binary)
+    path = Path(which if which is not None else binary)
+    return path.is_file() and os.access(path, os.X_OK)
 
 
 def _binary() -> str:

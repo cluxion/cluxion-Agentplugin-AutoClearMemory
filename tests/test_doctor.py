@@ -5,6 +5,8 @@ import subprocess
 import time
 from pathlib import Path
 
+import pytest
+
 from forgetforge import cli
 from forgetforge.doctor import (
     DoctorResult,
@@ -195,6 +197,24 @@ def _doctor_ctx() -> DoctorContext:
         hermes_bin="hermes",
         run=lambda cmd: subprocess.CompletedProcess(cmd, 0, "", ""),
     )
+
+
+@pytest.mark.parametrize(
+    "config_bytes",
+    [
+        b":\nbad: [\n",  # malformed YAML
+        b"pruner:\n  interval_hours: not-a-number\n",  # nonnumeric pruner interval
+        b"\xff\xfe",  # invalid UTF-8
+    ],
+    ids=["malformed_yaml", "nonnumeric_pruner_interval", "invalid_utf8"],
+)
+def test_config_file_loadable_fails_on_bad_config(tmp_path, monkeypatch, config_bytes):
+    # Bad configs must surface as fail, not skip (skip is for absent/uncheckable only).
+    monkeypatch.setenv("FORGETFORGE_HOME", str(tmp_path))
+    (tmp_path / "config.yaml").write_bytes(config_bytes)
+    status, _detail = PROBES["config_file_loadable"](_doctor_ctx())
+    assert status == "fail"
+    assert status != "skip"
 
 
 def test_db_probes_pass_with_isolated_home(tmp_path, monkeypatch):

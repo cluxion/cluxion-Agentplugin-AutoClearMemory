@@ -5,14 +5,11 @@ import json
 import sqlite3
 import sys
 from io import StringIO
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
 from forgetforge import cli
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
@@ -112,6 +109,62 @@ def test_store_reads_content_from_file_and_stdin(
     code, recalled = _run(capsys, "recall", "backed")
     assert code == 0
     assert {row["memory_id"] for row in recalled["results"]} == {"m-file", "m-stdin"}
+
+
+def test_store_huge_expire_days_returns_invalid_argument_with_no_row(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    # Overflow-scale --expire-days must be structured invalid_argument, never a partial row.
+    code = cli.main(["store", "m-huge", "--content", "x", "--expire-days", str(2**62)])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert code == 2
+    assert payload["ok"] is False
+    assert payload["error"] == "invalid_argument"
+    db_path = tmp_path / "db.sqlite"
+    if db_path.exists():
+        conn = sqlite3.connect(db_path)
+        try:
+            assert conn.execute("SELECT COUNT(*) FROM memories WHERE id = 'm-huge'").fetchone()[0] == 0
+        finally:
+            conn.close()
+
+
+def test_store_missing_content_file_returns_usage_or_invalid_argument(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    # Missing path is a caller/usage problem, not storage_error (FileNotFoundError is OSError).
+    missing = tmp_path / "no-such-content.txt"
+    code = cli.main(["store", "m-miss", "--content-file", str(missing)])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert code == 2
+    assert payload["ok"] is False
+    assert payload["error"] in {"invalid_argument", "usage_error"}
+    assert payload["error"] != "storage_error"
+
+
+def test_store_content_file_permission_error_returns_storage_error(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Unreadable --content-file is an I/O/storage failure (exit 1), not invalid_argument.
+    content_file = tmp_path / "content.txt"
+    content_file.write_text("secret", encoding="utf-8")
+    real_read_text = Path.read_text
+
+    def _read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self == content_file:
+            raise PermissionError("permission denied")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _read_text)
+    code = cli.main(["store", "m-perm", "--content-file", str(content_file)])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert code == 1
+    assert payload["ok"] is False
+    assert payload["error"] == "storage_error"
+    assert payload["error"] != "invalid_argument"
 
 
 def test_store_session_node_type_skips_recall_but_graph_recalls(capsys: pytest.CaptureFixture[str]) -> None:
@@ -391,3 +444,34 @@ def test_graph_ingest_non_dict_items_counted_as_skipped(
     assert payload["ok"] is True
     assert payload["nodes"] == 1
     assert payload["skipped"] == 3
+
+
+def test_pruner_daemon_invalid_config_returns_storage_error(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    # load_config OSError must map to storage_error JSON, not an uncaught traceback
+    (tmp_path / "config.yaml").write_text(
+        "pruner:\n  interval_hours: not-a-number\n",
+        encoding="utf-8",
+    )
+    code = cli.main(["pruner-daemon", "--once"])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert code == 1
+    assert payload["ok"] is False
+    assert payload["error"] == "storage_error"
+    assert "Traceback" not in captured.err
+
+
+def test_status_invalid_utf8_config_returns_storage_error(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    # Invalid UTF-8 config must map to storage_error JSON, not UnicodeDecodeError traceback
+    (tmp_path / "config.yaml").write_bytes(b"\xff\xfe")
+    code = cli.main(["status"])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert code == 1
+    assert payload["ok"] is False
+    assert payload["error"] == "storage_error"
+    assert "Traceback" not in captured.err
