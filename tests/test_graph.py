@@ -155,6 +155,20 @@ def test_ingested_nodes_are_fts_content_anchored(tmp_path):
     assert [n["id"] for n in out] == ["m-rule"]
 
 
+def test_hyphenated_mistake_anchor_matches_content(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGETFORGE_HOME", str(tmp_path))
+    conn = _fresh(tmp_path)
+    graph.ingest(
+        conn,
+        [{"id": "m-config", "content": "config-doctor hook failed", "node_type": "mistake"}],
+        [],
+    )
+
+    out = graph.graph_recall(conn, anchor_tags="config-doctor", mistakes=True)
+
+    assert [n["id"] for n in out] == ["m-config"]
+
+
 def test_empty_content_ingest_preserves_memory_and_fts(tmp_path):
     conn = _fresh(tmp_path)
     content = "rich searchable memory content"

@@ -161,12 +161,15 @@ def _seed_ids(conn, anchor_tags: str, session: str | None, mistakes: bool) -> li
     ids: list[str] = []
     # FTS over content (fast, ranked). domain_tags is not in the FTS index, so also
     # match tags via LIKE and union — routing must see tags, not just prose.
+    q_fts = " ".join(f'"{p}"' for p in q.split() if p)
+    if not q_fts:
+        return []
     try:
         rows = conn.execute(
             f"""SELECT m.id FROM memories_fts f JOIN memories m ON m.id = f.memory_id
                 WHERE memories_fts MATCH ? AND m.forget_requested = 0 {where_type}
                 LIMIT ?""",
-            (q, SEED_MAX),
+            (q_fts, SEED_MAX),
         ).fetchall()
         ids.extend(r[0] for r in rows)
     except Exception:

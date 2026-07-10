@@ -93,6 +93,36 @@ def test_plain_store_calls_behave_exactly_as_before(tmp_path: Path, monkeypatch)
     conn.close()
 
 
+def test_restore_preserves_keep_forever_through_expire_sweep(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("FORGETFORGE_HOME", str(tmp_path))
+    conn = db.connect(tmp_path / "db.sqlite")
+    store.store_memory(conn, memory_id="pin1", content="original pinned content")
+    db.mark_keep_forever(conn, "pin1")
+    conn.execute("UPDATE memories SET expire_at = 1 WHERE id = 'pin1'")
+    conn.commit()
+
+    store.store_memory(conn, memory_id="pin1", content="updated pinned content")
+
+    assert db.get_memory(conn, "pin1").keep_forever is True
+    assert graph.sweep_expired(conn) == 0
+    assert db.get_memory(conn, "pin1") is not None
+    conn.close()
+
+
+def test_restore_revives_soft_forgotten_memory(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("FORGETFORGE_HOME", str(tmp_path))
+    conn = db.connect(tmp_path / "db.sqlite")
+    store.store_memory(conn, memory_id="gone1", content="original disposable content")
+    db.mark_forget(conn, "gone1")
+
+    store.store_memory(conn, memory_id="gone1", content="revived searchable content")
+
+    assert db.get_memory(conn, "gone1").forget_requested is False
+    recalled = store.recall_with_feedback(conn, "revived")
+    assert [result["memory_id"] for result in recalled["results"]] == ["gone1"]
+    conn.close()
+
+
 def test_store_rejects_invalid_node_type_and_negative_expiry(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("FORGETFORGE_HOME", str(tmp_path))
     conn = db.connect(tmp_path / "db.sqlite")

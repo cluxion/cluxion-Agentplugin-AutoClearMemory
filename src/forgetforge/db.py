@@ -196,7 +196,8 @@ def upsert_memory(
             importance = excluded.importance,
             frequency = excluded.frequency,
             is_procedural = excluded.is_procedural,
-            keep_forever = excluded.keep_forever,
+            keep_forever = MAX(memories.keep_forever, excluded.keep_forever),
+            forget_requested = 0,
             updated_at = excluded.updated_at,
             node_type = COALESCE(?, node_type),
             expire_at = COALESCE(?, expire_at)
