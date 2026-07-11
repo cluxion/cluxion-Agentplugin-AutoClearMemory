@@ -3,14 +3,12 @@ engine call per listing (score_memories)."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import threading
+from pathlib import Path
 
 import pytest
 
 from forgetforge import db, recall
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
@@ -141,3 +139,68 @@ def test_record_retrieval_skips_redundant_get_memory(conn, monkeypatch: pytest.M
     recorded = recall.record_retrieval(conn, memory_id="solo", layer="explicit")
     assert recorded is not None
     assert calls == ["solo"]
+
+
+def test_two_connections_record_retrieval_no_lost_update(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Concurrent record_retrieval must serialize RMW so both bumps land."""
+    monkeypatch.setenv("FORGETFORGE_HOME", str(tmp_path))
+    db_path = tmp_path / "db.sqlite"
+    setup = db.connect(db_path)
+    db.upsert_memory(
+        setup,
+        memory_id="shared",
+        content="shared concurrent recall target",
+        importance=0.5,
+        frequency=0.0,
+    )
+    setup.close()
+
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            connection = db.connect(db_path)
+            barrier.wait(timeout=5)
+            recorded = recall.record_retrieval(connection, memory_id="shared", layer="explicit")
+            assert recorded is not None
+            connection.close()
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=15)
+    assert errors == []
+
+    verify = db.connect(db_path)
+    row = db.get_memory(verify, "shared")
+    assert row is not None
+    events = verify.execute(
+        "SELECT COUNT(*) AS c FROM retrieval_events WHERE memory_id = ?",
+        ("shared",),
+    ).fetchone()["c"]
+    assert int(events) == 2
+    assert row.retrieval_count == pytest.approx(0.90)
+    assert row.importance == pytest.approx(0.56)
+    assert row.frequency == pytest.approx(0.10)
+    verify.close()
+
+
+def test_record_retrieval_commit_false_leaves_owned_transaction(conn) -> None:
+    db.upsert_memory(conn, memory_id="owned", content="leave txn open for caller")
+    conn.commit()
+    assert not conn.in_transaction
+    recorded = recall.record_retrieval(conn, memory_id="owned", layer="explicit", commit=False)
+    assert recorded is not None
+    assert conn.in_transaction is True
+    conn.commit()
+
+
+def test_record_retrieval_missing_rolls_back_owned_transaction(conn) -> None:
+    assert not conn.in_transaction
+    recorded = recall.record_retrieval(conn, memory_id="missing", layer="explicit", commit=False)
+    assert recorded is None
+    assert conn.in_transaction is False

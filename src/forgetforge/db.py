@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import errno
 import fcntl
 import os
 import sqlite3
+import stat
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-_initialized_db_paths: set[str] = set()
+# path -> (st_dev, st_ino). Same path with a replaced inode must re-init.
+_initialized_db_paths: dict[str, tuple[int, int]] = {}
 
 _PRIVATE_DIR_MODE = 0o700
 _PRIVATE_FILE_MODE = 0o600
@@ -68,20 +71,25 @@ def connect(db_path: Path | str) -> sqlite3.Connection:
     db_path = Path(db_path)
     _secure_home_dir(db_path.parent)
     old_umask = os.umask(0o077)
+    hold_fd: int | None = None
     try:
+        # Pin the path's inode before sqlite open so a mid-connect os.replace
+        # cannot be cached as an initialized DB. No retry: mismatch fails closed.
+        hold_fd, expected = _open_db_path_identity(db_path)
         conn = sqlite3.connect(db_path)
         try:
+            _require_db_identity(db_path, expected, stage="post-open")
             conn.execute("PRAGMA busy_timeout=5000")
             conn.row_factory = sqlite3.Row
             path_key = str(db_path.resolve())
-            if path_key not in _initialized_db_paths:
+            if _initialized_db_paths.get(path_key) != expected:
                 # concurrent fresh-home first-inits (parallel `forgetforge store`)
                 # race the rollback→WAL switch and the DDL burst below with
                 # immediate SQLITE_BUSY that busy_timeout can't wait out —
                 # serialize across processes. WAL is set by SCHEMA's first
                 # pragma and is persistent, so no per-connect pragma is needed.
-                with (db_path.parent / ".init.lock").open("w") as init_lock:
-                    fcntl.flock(init_lock, fcntl.LOCK_EX)
+                lock_fd = _open_init_lock(db_path.parent / ".init.lock")
+                try:
                     conn.executescript(SCHEMA)
                     _ensure_fts(conn)
                     # graph columns (node_type etc.) are required by the retrieval queries,
@@ -89,14 +97,86 @@ def connect(db_path: Path | str) -> sqlite3.Connection:
                     from forgetforge import graph
 
                     graph.ensure_graph_schema(conn)
-                _initialized_db_paths.add(path_key)
+                finally:
+                    _close_init_lock(lock_fd)
+                _require_db_identity(db_path, expected, stage="post-schema")
+                _initialized_db_paths[path_key] = expected
             _secure_db_files(db_path)
         except Exception:
             conn.close()
             raise
     finally:
+        if hold_fd is not None:
+            os.close(hold_fd)
         os.umask(old_umask)
     return conn
+
+
+def _db_file_identity(db_path: Path) -> tuple[int, int] | None:
+    try:
+        st = db_path.stat()
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino)
+
+
+def _open_db_path_identity(db_path: Path) -> tuple[int, tuple[int, int]]:
+    """Non-truncating open/create of the DB path; return (fd, (dev, ino))."""
+    flags = os.O_RDWR | os.O_CREAT
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    fd = os.open(str(db_path), flags, _PRIVATE_FILE_MODE)
+    try:
+        st = os.fstat(fd)
+        return fd, (st.st_dev, st.st_ino)
+    except Exception:
+        os.close(fd)
+        raise
+
+
+def _require_db_identity(db_path: Path, expected: tuple[int, int], *, stage: str) -> None:
+    identity = _db_file_identity(db_path)
+    if identity != expected:
+        raise RuntimeError(
+            f"db path identity changed during {stage}: expected {expected!r}, got {identity!r} ({db_path})"
+        )
+
+
+def _open_init_lock(lock_path: Path) -> int:
+    """Open home/.init.lock without following/truncating a symlink target.
+
+    Uses O_RDWR|O_CREAT plus O_NOFOLLOW/O_CLOEXEC when available, verifies a
+    regular owner-private file via fstat, fchmod 0600, then exclusive flock.
+    """
+    flags = os.O_RDWR | os.O_CREAT
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        fd = os.open(str(lock_path), flags, _PRIVATE_FILE_MODE)
+    except OSError:
+        # Symlink (or other non-regular) fail closed without touching target.
+        raise
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError(errno.ELOOP, f"init lock is not a regular file: {lock_path}")
+        if hasattr(os, "getuid") and st.st_uid != os.getuid():
+            raise OSError(errno.EPERM, f"init lock not owned by current user: {lock_path}")
+        os.fchmod(fd, _PRIVATE_FILE_MODE)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
+
+
+def _close_init_lock(fd: int) -> None:
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 def _secure_home_dir(path: Path) -> None:
@@ -343,24 +423,88 @@ def update_memory_state(
         conn.commit()
 
 
+# (new_tier, id, expected_tier, retrieval_count, importance, frequency,
+#  is_procedural, keep_forever, forget_requested, last_recall_at, updated_at, content)
+MemoryTierUpdate = tuple[str, str, str, float, float, float, bool | int, bool | int, bool | int, str | None, str, str]
+
+
 def update_memory_tiers(
     conn: sqlite3.Connection,
-    updates: list[tuple[str, float, str]],
-) -> int:
-    """Apply (tier, retrieval_count, memory_id) updates in one transaction.
+    updates: list[MemoryTierUpdate],
+) -> list[str]:
+    """CAS-apply tier transitions from a pre-archive snapshot.
 
-    Per-row commits fsync once per memory; a pruner run demoting hundreds of
-    rows spends most of its wall-clock there, so batch with a single commit.
+    Each update is
+    ``(new_tier, memory_id, expected_tier, expected_retrieval_count,
+    expected_importance, expected_frequency, expected_is_procedural,
+    expected_keep_forever, expected_forget_requested, expected_last_recall_at,
+    expected_updated_at, expected_content)``.
+    Only ``tier`` / ``updated_at`` are written; every expected field is
+    compared so pin/score/content races CAS-miss. Returns applied ids.
     """
     if not updates:
-        return 0
+        return []
     stamp = now_iso()
-    conn.executemany(
-        "UPDATE memories SET tier = ?, retrieval_count = ?, updated_at = ? WHERE id = ?",
-        [(tier, retrieval_count, stamp, memory_id) for tier, retrieval_count, memory_id in updates],
-    )
-    conn.commit()
-    return len(updates)
+    applied: list[str] = []
+    began = not conn.in_transaction
+    if began:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        for (
+            new_tier,
+            memory_id,
+            expected_tier,
+            expected_retrieval_count,
+            expected_importance,
+            expected_frequency,
+            expected_is_procedural,
+            expected_keep_forever,
+            expected_forget_requested,
+            expected_last_recall_at,
+            expected_updated_at,
+            expected_content,
+        ) in updates:
+            cur = conn.execute(
+                """
+                UPDATE memories
+                SET tier = ?, updated_at = ?
+                WHERE id = ?
+                  AND tier = ?
+                  AND retrieval_count = ?
+                  AND importance = ?
+                  AND frequency = ?
+                  AND is_procedural = ?
+                  AND keep_forever = ?
+                  AND forget_requested = ?
+                  AND last_recall_at IS ?
+                  AND updated_at = ?
+                  AND content = ?
+                """,
+                (
+                    new_tier,
+                    stamp,
+                    memory_id,
+                    expected_tier,
+                    expected_retrieval_count,
+                    expected_importance,
+                    expected_frequency,
+                    expected_is_procedural,
+                    expected_keep_forever,
+                    expected_forget_requested,
+                    expected_last_recall_at,
+                    expected_updated_at,
+                    expected_content,
+                ),
+            )
+            if cur.rowcount > 0:
+                applied.append(memory_id)
+        if began:
+            conn.commit()
+    except Exception:
+        if began:
+            conn.rollback()
+        raise
+    return applied
 
 
 def bump_recall_stats(
@@ -544,6 +688,7 @@ def _row_to_memory(row: sqlite3.Row) -> MemoryRow:
 
 __all__ = [
     "MemoryRow",
+    "MemoryTierUpdate",
     "bump_recall_stats",
     "connect",
     "get_memory",

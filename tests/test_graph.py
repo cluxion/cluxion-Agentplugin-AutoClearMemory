@@ -354,7 +354,7 @@ def test_recall_works_on_pre_extension_db(tmp_path):
     )
     c.commit()
     c.close()
-    db._initialized_db_paths.discard(str(p.resolve()))
+    db._initialized_db_paths.pop(str(p.resolve()), None)
     conn = db.connect(p)  # must add node_type and not crash
     assert {m.id for m in db.list_hot_memories(conn, limit=10)} == {"leg"}
 

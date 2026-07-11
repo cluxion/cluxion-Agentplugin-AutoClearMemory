@@ -59,69 +59,92 @@ def record_retrieval(
     source: str | None = None,
     commit: bool = True,
 ) -> RecallResult | None:
-    row = db.get_memory(conn, memory_id)
-    if row is None or row.forget_requested:
-        return None
-    boost = LAYER_BOOST.get(layer, 0.10)
-    conn.execute(
-        """
-        INSERT INTO retrieval_events (memory_id, layer, boost, source, created_at)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (memory_id, layer, boost, source, db.now_iso()),
-    )
-    retrieval_count = row.retrieval_count + boost
-    decision = rust_bridge.decide_tier(
-        days_since_recall=0.0,
-        retrieval_count=retrieval_count,
-        importance=row.importance,
-        frequency=row.frequency,
-        is_procedural=row.is_procedural,
-        keep_forever=row.keep_forever,
-    )
-    # Helpers never commit here; this function owns the transaction so a
-    # standalone call costs one fsync and recall_query batches it away.
-    db.update_memory_state(
-        conn,
-        memory_id=memory_id,
-        tier=str(decision["tier"]),
-        retrieval_count=retrieval_count,
-        last_recall_at=db.now_iso(),
-        commit=False,
-    )
-    db.bump_recall_stats(
-        conn,
-        memory_id,
-        layer,
-        row=replace(row, tier=str(decision["tier"]), retrieval_count=retrieval_count),
-        commit=False,
-    )
-    if commit:
-        conn.commit()
-    return RecallResult(
-        memory_id=memory_id,
-        content=row.content,
-        tier=str(decision["tier"]),
-        retention=user_retention(float(decision["retention"]), keep_forever=row.keep_forever),
-        action=str(decision["action"]),
-        layer=layer,
-    )
+    # Capture whether we own a fresh transaction before any read so concurrent
+    # RMW callers cannot lost-update on retrieval_count/importance/frequency.
+    began_transaction = not conn.in_transaction
+    if began_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = db.get_memory(conn, memory_id)
+        if row is None or row.forget_requested:
+            if began_transaction:
+                conn.rollback()
+            return None
+        boost = LAYER_BOOST.get(layer, 0.10)
+        conn.execute(
+            """
+            INSERT INTO retrieval_events (memory_id, layer, boost, source, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (memory_id, layer, boost, source, db.now_iso()),
+        )
+        retrieval_count = row.retrieval_count + boost
+        decision = rust_bridge.decide_tier(
+            days_since_recall=0.0,
+            retrieval_count=retrieval_count,
+            importance=row.importance,
+            frequency=row.frequency,
+            is_procedural=row.is_procedural,
+            keep_forever=row.keep_forever,
+        )
+        # Helpers never commit here; this function owns the transaction so a
+        # standalone call costs one fsync and recall_query batches it away.
+        db.update_memory_state(
+            conn,
+            memory_id=memory_id,
+            tier=str(decision["tier"]),
+            retrieval_count=retrieval_count,
+            last_recall_at=db.now_iso(),
+            commit=False,
+        )
+        db.bump_recall_stats(
+            conn,
+            memory_id,
+            layer,
+            row=replace(row, tier=str(decision["tier"]), retrieval_count=retrieval_count),
+            commit=False,
+        )
+        if commit:
+            conn.commit()
+        # commit=False: leave the transaction open for the caller (whether we
+        # began it or a pre-existing outer owner already held it).
+        return RecallResult(
+            memory_id=memory_id,
+            content=row.content,
+            tier=str(decision["tier"]),
+            retention=user_retention(float(decision["retention"]), keep_forever=row.keep_forever),
+            action=str(decision["action"]),
+            layer=layer,
+        )
+    except Exception:
+        if began_transaction:
+            conn.rollback()
+        raise
 
 
 def recall_query(
     conn, query: str, *, layer: str = "explicit", config: ForgetForgeConfig | None = None
 ) -> list[RecallResult]:
     _ = config or load_config()
-    matches = db.search_memories(conn, query)
-    results: list[RecallResult] = []
-    # One transaction for the whole recall: per-row commits cost one
-    # fsync each and dominated multi-match recalls.
-    for row in matches:
-        recorded = record_retrieval(conn, memory_id=row.id, layer=layer, source=f"recall:{query}", commit=False)
-        if recorded is not None:
-            results.append(recorded)
-    conn.commit()
-    return results
+    # One outer IMMEDIATE transaction for the whole recall so per-row
+    # record_retrieval(commit=False) never starts its own write lock.
+    began_transaction = not conn.in_transaction
+    if began_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        matches = db.search_memories(conn, query)
+        results: list[RecallResult] = []
+        for row in matches:
+            recorded = record_retrieval(conn, memory_id=row.id, layer=layer, source=f"recall:{query}", commit=False)
+            if recorded is not None:
+                results.append(recorded)
+        # Preserve unconditional commit (batch fsync, no write-lock leak).
+        conn.commit()
+        return results
+    except Exception:
+        if began_transaction:
+            conn.rollback()
+        raise
 
 
 def score_memory(row: db.MemoryRow, config: ForgetForgeConfig | None = None) -> dict[str, Any]:

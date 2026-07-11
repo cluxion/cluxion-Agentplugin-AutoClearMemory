@@ -1,6 +1,8 @@
 from pathlib import Path
 from stat import S_IMODE
 
+import pytest
+
 from forgetforge import db, recall
 
 
@@ -92,4 +94,89 @@ def test_connect_secures_fresh_home_db_and_wal_files(tmp_path: Path, monkeypatch
     for path in (db_path, Path(f"{db_path}-wal"), Path(f"{db_path}-shm")):
         assert path.exists()
         assert _mode(path) == 0o600
+    conn.close()
+
+
+def test_connect_init_lock_symlink_fails_closed_without_touching_target(tmp_path: Path, monkeypatch):
+    """home/.init.lock as a symlink must fail closed; never truncate the target."""
+    home = tmp_path / "sym-home"
+    home.mkdir()
+    monkeypatch.setenv("FORGETFORGE_HOME", str(home))
+    victim = tmp_path / "victim-payload.txt"
+    victim.write_text("preserve-me\n", encoding="utf-8")
+    lock = home / ".init.lock"
+    lock.symlink_to(victim)
+
+    with pytest.raises(OSError):
+        db.connect(home / "db.sqlite")
+
+    assert lock.is_symlink()
+    assert victim.read_text(encoding="utf-8") == "preserve-me\n"
+    assert victim.stat().st_size == len("preserve-me\n")
+
+
+def test_connect_reinitializes_when_same_path_db_replaced(tmp_path: Path, monkeypatch):
+    """Path-only init cache must not skip schema after same-path file replacement."""
+    monkeypatch.setenv("FORGETFORGE_HOME", str(tmp_path))
+    db_path = tmp_path / "db.sqlite"
+    conn = db.connect(db_path)
+    db.upsert_memory(conn, memory_id="old", content="first file identity")
+    conn.close()
+
+    db_path.unlink()
+    for suffix in ("-wal", "-shm"):
+        side = Path(f"{db_path}{suffix}")
+        if side.exists():
+            side.unlink()
+
+    # New inode at the same path: connect must re-run schema/FTS/graph init.
+    conn2 = db.connect(db_path)
+    db.upsert_memory(conn2, memory_id="new", content="second file identity")
+    assert db.get_memory(conn2, "new") is not None
+    assert db.get_memory(conn2, "old") is None
+    conn2.close()
+
+
+def test_connect_fails_closed_on_os_replace_interleave(tmp_path: Path, monkeypatch):
+    """Held pre-open inode must fail closed if the path is replaced mid-connect."""
+    import os
+    import sqlite3
+
+    monkeypatch.setenv("FORGETFORGE_HOME", str(tmp_path))
+    db_path = tmp_path / "db.sqlite"
+    path_key = str(db_path.resolve())
+    real_connect = sqlite3.connect
+
+    def replace_then_connect(database, *args, **kwargs):
+        # os.replace mid-connect: sqlite would otherwise open the replacement inode.
+        alt = tmp_path / "replacement.sqlite"
+        alt_conn = real_connect(alt)
+        alt_conn.close()
+        os.replace(alt, database)
+        return real_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", replace_then_connect)
+    before = dict(db._initialized_db_paths)
+    with pytest.raises(RuntimeError, match="db path identity changed"):
+        db.connect(db_path)
+    # Never cache the replacement inode from a failed connect.
+    assert db._initialized_db_paths == before
+    assert path_key not in db._initialized_db_paths
+
+    monkeypatch.setattr(sqlite3, "connect", real_connect)
+    # Path now points at a bare sqlite file (replacement). Next connect must
+    # run schema (not skip via a stale cache entry) so writes succeed.
+    conn = db.connect(db_path)
+    assert db._initialized_db_paths.get(path_key) == db._db_file_identity(db_path)
+    db.upsert_memory(conn, memory_id="after-replace", content="schema alive")
+    assert db.get_memory(conn, "after-replace") is not None
+    # Same-process second connect with matching inode skips schema work.
+    statements: list[str] = []
+    probe = db.connect(db_path)
+    probe.set_trace_callback(statements.append)
+    row = db.get_memory(probe, "after-replace")
+    probe.set_trace_callback(None)
+    assert row is not None
+    assert not any("CREATE" in stmt.upper() for stmt in statements)
+    probe.close()
     conn.close()

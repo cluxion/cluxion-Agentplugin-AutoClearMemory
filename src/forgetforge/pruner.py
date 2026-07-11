@@ -14,8 +14,6 @@ def run_pruner(conn, config: ForgetForgeConfig | None = None) -> dict[str, Any]:
     """Background pruner: demote low-retention memories to cold tier."""
     cfg = config or load_config()
     cfg.archive_dir.mkdir(parents=True, exist_ok=True)
-    demoted: list[str] = []
-    promoted: list[str] = []
     rows = [row for row in db.list_memories(conn, limit=10_000) if not (row.keep_forever or row.forget_requested)]
     # One engine call for the whole table: the JSON boundary dominates
     # per-row invocations, so batching is where Rust actually wins.
@@ -32,17 +30,36 @@ def run_pruner(conn, config: ForgetForgeConfig | None = None) -> dict[str, Any]:
             for row in rows
         ]
     )
-    # Collect transitions first, then apply in bulk: one sqlite transaction
-    # and one archive pass instead of per-row commit + parquet write.
-    tier_updates: list[tuple[str, float, str]] = []
+    # Collect transitions first: archive without a write lock, then CAS-apply
+    # tier changes against the pre-archive snapshot so concurrent recall cannot
+    # be overwritten by a stale demotion/promotion.
+    tier_updates: list[db.MemoryTierUpdate] = []
     archive_records: list[dict[str, Any]] = []
+    candidate_demotions: list[str] = []
+    candidate_promotions: list[str] = []
     for row, decision in zip(rows, decisions, strict=True):
         new_tier = str(decision["tier"])
         if new_tier == row.tier:
             continue
-        tier_updates.append((new_tier, row.retrieval_count, row.id))
+        # Full pre-archive eligibility/decision/content snapshot for CAS.
+        tier_updates.append(
+            (
+                new_tier,
+                row.id,
+                row.tier,
+                row.retrieval_count,
+                row.importance,
+                row.frequency,
+                row.is_procedural,
+                row.keep_forever,
+                row.forget_requested,
+                row.last_recall_at,
+                row.updated_at,
+                row.content,
+            )
+        )
         if new_tier == "cold":
-            demoted.append(row.id)
+            candidate_demotions.append(row.id)
             archive_records.append(
                 {
                     "memory_id": row.id,
@@ -52,9 +69,15 @@ def run_pruner(conn, config: ForgetForgeConfig | None = None) -> dict[str, Any]:
                 }
             )
         elif row.tier == "cold":
-            promoted.append(row.id)
-    db.update_memory_tiers(conn, tier_updates)
+            candidate_promotions.append(row.id)
+    # Archive demotions before any tier commit. An archive failure leaves both
+    # demotions and promotions at prior tiers so the next pruner retries
+    # coherently. Accept possible duplicate archive if a later CAS miss or DB
+    # commit fails; no outbox.
     archive.write_cold_archive_batch(cfg, archive_records)
+    applied = set(db.update_memory_tiers(conn, tier_updates))
+    demoted = [memory_id for memory_id in candidate_demotions if memory_id in applied]
+    promoted = [memory_id for memory_id in candidate_promotions if memory_id in applied]
     retrieval_gc = db.prune_retrieval_events(
         conn,
         max_age_days=cfg.retrieval_events_max_age_days,
