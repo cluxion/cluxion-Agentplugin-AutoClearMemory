@@ -31,7 +31,7 @@ Skill 지시문: [`skills/forgetforge/SKILL.md`](../skills/forgetforge/SKILL.md)
 pip install cluxion-Agentplugin-AutoClearMemory
 forgetforge init
 codex plugin marketplace add <path-to-marketplace-root>
-codex plugin add cluxion-agentplugin-autoclearmemory
+codex plugin add clx-autoclearmemory
 ```
 
 Hermes: `~/.hermes/config.yaml` 의 `plugins.enabled` 에 `cluxion-agentplugin-autoclearmemory` 를 넣고 Hermes를 재시작하세요.

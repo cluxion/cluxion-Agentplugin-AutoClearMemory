@@ -44,7 +44,7 @@ Install this repository as a Codex marketplace plugin:
 
 ```bash
 codex plugin marketplace add <path-to-marketplace-root>
-codex plugin add cluxion-agentplugin-autoclearmemory
+codex plugin add clx-autoclearmemory
 ```
 
 The root `.codex-plugin/plugin.json` exposes `commands/` and `skills/`. The connected AI calls the `forgetforge` CLI:

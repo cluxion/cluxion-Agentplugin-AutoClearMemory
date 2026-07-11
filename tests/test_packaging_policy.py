@@ -4,6 +4,9 @@ import json
 import tomllib
 from pathlib import Path
 
+CANONICAL_PLUGIN_ID = "clx-autoclearmemory"
+PUBLIC_REPO_URL = "https://github.com/cluxion/clx-autoclearmemory"
+
 
 def test_root_plugin_artifacts_are_version_synced() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
@@ -12,6 +15,8 @@ def test_root_plugin_artifacts_are_version_synced() -> None:
     claude = json.loads(Path(".claude-plugin/plugin.json").read_text(encoding="utf-8"))
     codex = json.loads(Path(".codex-plugin/plugin.json").read_text(encoding="utf-8"))
 
+    assert claude["name"] == CANONICAL_PLUGIN_ID
+    assert codex["name"] == CANONICAL_PLUGIN_ID
     assert claude["version"] == version
     assert codex["version"] == version
     init_src = Path("src/forgetforge/__init__.py").read_text(encoding="utf-8")
@@ -32,5 +37,14 @@ def test_marketplace_manifest_is_version_synced() -> None:
     version = pyproject["project"]["version"]
 
     marketplace = json.loads(Path(".claude-plugin/marketplace.json").read_text(encoding="utf-8"))
+    assert marketplace["plugins"][0]["name"] == CANONICAL_PLUGIN_ID
     assert marketplace["plugins"][0]["version"] == version
     assert marketplace["plugins"][0]["source"] == "./"
+
+
+def test_public_source_urls_use_canonical_repo_name() -> None:
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    urls = pyproject["project"]["urls"]
+    assert urls["Homepage"] == PUBLIC_REPO_URL
+    assert urls["Repository"] == PUBLIC_REPO_URL
+    assert urls["Issues"] == f"{PUBLIC_REPO_URL}/issues"

@@ -2,7 +2,7 @@
 
 ======== 한국어 ========
 
-# cluxion-Agentplugin-AutoClearMemory
+# clx-autoclearmemory
 
 AI 에이전트(Hermes Agent, Claude Code, Codex)를 위한 기억 플러그인입니다. 사람의 기억처럼 동작하는
 장기 기억을 에이전트에 부여합니다: 자주 회상하는 사실은 또렷하게 남고, 전혀 쓰지 않는 사실은 흐려져
@@ -81,7 +81,7 @@ Apache-2.0
 
 ============ English ==========
 
-# cluxion-Agentplugin-AutoClearMemory
+# clx-autoclearmemory
 
 A memory plugin for AI agents (Hermes Agent, Claude Code, Codex). It gives your agent a
 long-term memory that behaves like human memory: facts you recall often stay sharp, facts you

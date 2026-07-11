@@ -53,9 +53,9 @@ forgetforge = "forgetforge.cli:main"
 cluxion-agentplugin-autoclearmemory = "forgetforge.adapters.hermes"
 
 [project.urls]
-Homepage = "https://github.com/cluxion/cluxion-Agentplugin-AutoClearMemory"
-Repository = "https://github.com/cluxion/cluxion-Agentplugin-AutoClearMemory"
-Issues = "https://github.com/cluxion/cluxion-Agentplugin-AutoClearMemory/issues"
+Homepage = "https://github.com/cluxion/clx-autoclearmemory"
+Repository = "https://github.com/cluxion/clx-autoclearmemory"
+Issues = "https://github.com/cluxion/clx-autoclearmemory/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/forgetforge"]

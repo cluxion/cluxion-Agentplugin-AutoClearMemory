@@ -6,7 +6,7 @@
   },
   "plugins": [
     {
-      "name": "cluxion-agentplugin-autoclearmemory",
+      "name": "clx-autoclearmemory",
       "description": "ForgetForge memory lifecycle: recall, status, forgetting stages, pruner with hard caps.",
       "version": "0.3.46",
       "source": "./"
