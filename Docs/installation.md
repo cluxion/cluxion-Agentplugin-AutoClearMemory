@@ -24,8 +24,12 @@ Rust가 없어도 **Python fallback**으로 scoring/tier가 동작합니다.
 
 ## Hermes
 
-```bash
-hermes plugins enable forgetforge
+`~/.hermes/config.yaml` 에 추가한 뒤 Hermes를 재시작하세요.
+
+```yaml
+plugins:
+  enabled:
+    - cluxion-agentplugin-autoclearmemory
 ```
 
 연결된 AI에게 `forgetforge_*` 도구 사용을 skill로 안내합니다.

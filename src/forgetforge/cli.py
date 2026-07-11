@@ -84,7 +84,8 @@ def _parser(*, json_errors: bool = False) -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", parser_class=parser_class)
     sub.add_parser("check", help="Check Rust engine and database paths")
     init = sub.add_parser("init", help="Initialize ~/.forgetforge and optional agent adapters")
-    init.add_argument("--agents", default="all", help="Comma-separated: hermes,claude,codex or all")
+    agents_help = f"Comma-separated: {', '.join(init_assets.known_agents())} or all"
+    init.add_argument("--agents", default="all", help=agents_help)
     sub.add_parser("status", help="Memory health summary")
     recall_cmd = sub.add_parser("recall", help="Recall memories matching a query")
     recall_cmd.add_argument("query")

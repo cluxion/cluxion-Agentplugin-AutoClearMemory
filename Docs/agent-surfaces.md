@@ -8,7 +8,7 @@ Codex와 Claude Code는 같은 루트 플러그인 artifact를 설치하고, **c
 ## Hermes
 
 - Entry: `[project.entry-points."hermes_agent.plugins"]`
-- 활성화: `hermes plugins enable forgetforge`
+- 활성화: `~/.hermes/config.yaml` 의 `plugins.enabled` 에 `cluxion-agentplugin-autoclearmemory` 추가 후 Hermes 재시작
 - Tools: `forgetforge_store`, `forgetforge_recall`, `forgetforge_status`, `forgetforge_keep`, `forgetforge_forget`, `forgetforge_import_brief`, `forgetforge_hot_context`
 - `forgetforge_recall`의 `layer`: `explicit` | `implicit` | `reflection`
 - `pre_llm_call` hook: hot tier 자동 inject
@@ -44,7 +44,7 @@ Codex와 Claude Code는 같은 루트 플러그인 artifact를 설치하고, **c
 | `forgetforge forget <id>` | `#forget_this` |
 | `forgetforge status` | Memory health |
 | `forgetforge store <id> --content "..."` / `--content-file <path>` / `--content -` | Store/update memory |
-| `forgetforge import-brief --brief "..."` / `--brief-file <path>` / `--brief -` | Brief handoff |
+| `forgetforge import-brief --source manual --brief "..."` / `forgetforge import-brief --source manual --brief-file <path>` / `forgetforge import-brief --source manual --brief -` | Brief handoff |
 | `forgetforge hot-context` | Hot tier block |
 | `forgetforge prune` | Pruner 1회 |
 | `forgetforge pruner-daemon --max-cycles 24` | Bounded background pruner |

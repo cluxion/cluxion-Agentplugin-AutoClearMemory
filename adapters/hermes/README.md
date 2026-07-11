@@ -2,8 +2,15 @@
 
 Hermes는 pip entry point로 ForgetForge를 로드합니다.
 
+`~/.hermes/config.yaml` 에 추가한 뒤 Hermes를 재시작하고, 어댑터 자산을 설치하세요.
+
+```yaml
+plugins:
+  enabled:
+    - cluxion-agentplugin-autoclearmemory
+```
+
 ```bash
-hermes plugins enable forgetforge
 forgetforge init --agents=hermes
 ```
 

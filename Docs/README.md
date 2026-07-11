@@ -32,8 +32,9 @@ pip install cluxion-Agentplugin-AutoClearMemory
 forgetforge init
 codex plugin marketplace add <path-to-marketplace-root>
 codex plugin add cluxion-agentplugin-autoclearmemory
-hermes plugins enable forgetforge   # Hermes 예시
 ```
+
+Hermes: `~/.hermes/config.yaml` 의 `plugins.enabled` 에 `cluxion-agentplugin-autoclearmemory` 를 넣고 Hermes를 재시작하세요.
 
 ## 목차
 

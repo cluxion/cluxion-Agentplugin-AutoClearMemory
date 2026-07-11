@@ -63,6 +63,27 @@ def test_init_rejects_unknown_agents_as_stdout_json(capsys: pytest.CaptureFixtur
     assert payload["error"] == "unknown_agents"
 
 
+def test_init_agents_help_derived_from_known_agents_not_hardcoded_surfaces() -> None:
+    """init --agents help must list known_agents + all; never claude/codex init assets."""
+    from forgetforge import init_assets
+
+    parser = cli._parser()
+    init_action = next(a for a in parser._subparsers._group_actions if a.dest == "command")  # type: ignore[attr-defined]
+    init_parser = init_action.choices["init"]
+    agents_action = next(a for a in init_parser._actions if "--agents" in a.option_strings)
+    help_text = agents_action.help or ""
+
+    known = list(init_assets.known_agents())
+    expected_tokens = [*known, "all"]
+    for token in expected_tokens:
+        assert token in help_text, f"expected {token!r} in --agents help: {help_text!r}"
+    # Help body should be derived from known_agents (+ all), not a parallel hardcoded list.
+    agents_csv = ", ".join(known)
+    assert agents_csv in help_text
+    assert "claude" not in help_text
+    assert "codex" not in help_text
+
+
 def test_init_never_overwrites_existing_config(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     (tmp_path / "config.yaml").write_text("pruner:\n  interval_hours: 1\n", encoding="utf-8")
     code, payload = _run(capsys, "init", "--agents", "hermes")
