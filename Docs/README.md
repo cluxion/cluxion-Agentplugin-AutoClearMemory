@@ -23,7 +23,7 @@
 
 **v0.2 추가:** FTS5 recall, brief handoff, hot inject hook, contradiction hints, Parquet cold archive.
 
-Skill 지시문: [`skills/forgetforge/SKILL.md`](../skills/forgetforge/SKILL.md)
+Skill 지시문: [`skills/clx-forgetforge/SKILL.md`](../skills/clx-forgetforge/SKILL.md)
 
 ### 사람(개발자)이 할 일
 

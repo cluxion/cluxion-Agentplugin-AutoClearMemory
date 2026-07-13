@@ -16,7 +16,7 @@ Codex와 Claude Code는 같은 루트 플러그인 artifact를 설치하고, **c
 ## Claude Code
 
 - Manifest: `.claude-plugin/plugin.json`
-- Skill: `skills/forgetforge/SKILL.md`
+- Skill: `skills/clx-forgetforge/SKILL.md`
 - Commands: `commands/forgetforge-*.md`
 - 연결된 AI는 skill 규칙에 따라 CLI 또는 동일 semantics의 도구 호출
 - 세션 마무리 reflection도 **Claude 모델**이 skill 지시에 따라 `layer: reflection` recall 기록
@@ -24,7 +24,7 @@ Codex와 Claude Code는 같은 루트 플러그인 artifact를 설치하고, **c
 ## Codex
 
 - Manifest: `.codex-plugin/plugin.json`
-- Skill: `skills/forgetforge/SKILL.md`
+- Skill: `skills/clx-forgetforge/SKILL.md`
 - Commands: `commands/forgetforge-*.md`
 - 연결된 AI는 터미널에서 `forgetforge` CLI를 호출 (recall/status/keep/forget)
 - 규칙은 Claude skill과 동일
@@ -32,7 +32,7 @@ Codex와 Claude Code는 같은 루트 플러그인 artifact를 설치하고, **c
 ## Grok Build
 
 - `forgetforge` CLI + 동일 recall 규칙
-- 프로젝트 skill에 `skills/forgetforge/SKILL.md` 내용을 참고해 연동
+- 프로젝트 skill에 `skills/clx-forgetforge/SKILL.md` 내용을 참고해 연동
 
 ## 공통 명령
 

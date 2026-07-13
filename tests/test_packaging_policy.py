@@ -24,7 +24,9 @@ def test_root_plugin_artifacts_are_version_synced() -> None:
     assert Path("commands/forgetforge-recall.md").is_file()
     assert Path("commands/forgetforge-status.md").is_file()
     assert Path("commands/forgetforge-doctor.md").is_file()
-    assert Path("skills/forgetforge/SKILL.md").is_file()
+    skill = Path("skills/clx-forgetforge/SKILL.md")
+    assert skill.is_file()
+    assert "name: clx-forgetforge\n" in skill.read_text(encoding="utf-8")
 
 
 def test_surface_adapter_forks_removed() -> None:
